@@ -93,14 +93,16 @@ N_GHOSTS = 7
 N_POWER = 28
 
 BOT_SIZE     = 0.10    # metres — minibot footprint
-LANE_WIDTH   = 0.12    # bot + 0.02 m gap
+LANE_WIDTH   = 0.09    # bot + 0.01 m gap (tighter to fit 8 bots in cell)
 WALL_THICK   = 0.15    # 1.5 × bot_size
 WALL_HEIGHT  = 0.105   # 1.5 × bot height (~70 mm)
 
-PASSAGE_SPAN = 7 * LANE_WIDTH + BOT_SIZE          # 0.94 m
-CELL_PITCH   = PASSAGE_SPAN + WALL_THICK           # 1.09 m
+PASSAGE_SPAN = 7 * LANE_WIDTH + BOT_SIZE          # 0.73 m
+CELL_PITCH   = PASSAGE_SPAN + WALL_THICK           # 0.88 m
 
 # Channel offsets (diagonal — unique X and Y per bot)
+# With LANE_WIDTH=0.09, max offset for ghost 6 is 4 * 0.09 = 0.36m
+# 0.36m + 0.05m = 0.41m < 0.44m (half pitch) -> fits perfectly!
 CHANNEL_OFFSETS = [
     ( 0,  0),   # pacman  — centre
     (+1, +1),   # ghost 0

@@ -38,7 +38,7 @@ BOT_DEFS = [
     ('ghost_3',   1.000, 0.627, 0.118),   # orange
     ('ghost_4',   0.706, 0.000, 0.706),   # purple
     ('ghost_5',   0.000, 0.706, 0.314),   # green
-    ('ghost_6',   0.863, 0.863, 0.000),   # yellow-green
+    ('ghost_6',   1.000, 1.000, 1.000),   # white
 ]
 
 
@@ -181,7 +181,7 @@ def generate_launch_description():
             'grid_json':    grid_json,
             'player_start': player_start,
             'cell_pitch':   cell_pitch,
-            'speed':        5.0,
+            'speed':        3.0,
             'use_sim_time': True,
         }],
     )

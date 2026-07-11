@@ -11,7 +11,7 @@ Subscribes to:
 """
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Int32, Bool, String
+from std_msgs.msg import Int32, Bool, String, Int32MultiArray
 
 GHOST_COUNT = 7   # all ghosts alive until death mechanic is added
 
@@ -34,13 +34,13 @@ class GameMonitorNode(Node):
         self.state     = 'waiting...'
         self.powered   = False
         self.steps     = 0
-        self.pellets   = -1   # -1 = not yet received
+        self.pellet_status = None   # Will store [consumed, total, p_consumed, p_total]
 
         self.create_subscription(Int32,  '/game/score',             self._score,   10)
         self.create_subscription(String, '/game/state',             self._state_cb,10)
         self.create_subscription(Bool,   '/game/powered',           self._power,   10)
         self.create_subscription(Int32,  '/game/steps',             self._steps,   10)
-        self.create_subscription(Int32,  '/game/pellets_remaining', self._pellets, 10)
+        self.create_subscription(Int32MultiArray, '/game/pellets_remaining', self._pellets, 10)
 
         self.create_timer(1.0, self._print)
         self.get_logger().info('game_monitor running — waiting for game data…')
@@ -49,12 +49,17 @@ class GameMonitorNode(Node):
     def _state_cb(self,m): self.state   = m.data
     def _power(self,   m): self.powered = m.data
     def _steps(self,   m): self.steps   = m.data
-    def _pellets(self, m): self.pellets = m.data
+    def _pellets(self, m): self.pellet_status = m.data
 
     def _print(self):
         power_str = f'{MAGENTA}⚡ POWERED{RESET}' if self.powered else f'{GREY}normal{RESET}'
         state_col = GREEN if self.state == 'win' else (YELLOW if self.state == 'playing' else GREY)
-        pellet_str = (f'{self.pellets}' if self.pellets >= 0 else '…')
+        if self.pellet_status:
+            pellet_str = f"{self.pellet_status[0]}/{self.pellet_status[1]}"
+            power_p_str = f"{self.pellet_status[2]}/{self.pellet_status[3]}"
+        else:
+            pellet_str = "…"
+            power_p_str = "…"
 
         print(CLEAR, end='')
         print(f'{BOLD}{CYAN}╔══════════════════════════════╗{RESET}')
@@ -62,10 +67,11 @@ class GameMonitorNode(Node):
         print(f'{BOLD}{CYAN}╚══════════════════════════════╝{RESET}')
         print(f'  {BOLD}Score   {RESET}: {YELLOW}{self.score:>6}{RESET}')
         print(f'  {BOLD}Steps   {RESET}: {self.steps:>6}')
-        print(f'  {BOLD}Pellets {RESET}: {RED}{pellet_str:>6}{RESET}  remaining')
+        print(f'  {BOLD}Pellets {RESET}: {RED}{pellet_str:>9}{RESET} consumed')
+        print(f'  {BOLD}Powers  {RESET}: {MAGENTA}{power_p_str:>9}{RESET} consumed')
         print(f'  {BOLD}Ghosts  {RESET}: {RED}{GHOST_COUNT}/7{RESET}  alive')
         print(f'  {BOLD}State   {RESET}: {state_col}{self.state}{RESET}')
-        print(f'  {BOLD}Power   {RESET}: {power_str}')
+        print(f'  {BOLD}Aura    {RESET}: {power_str}')
         print()
 
 

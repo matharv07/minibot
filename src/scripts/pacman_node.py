@@ -44,7 +44,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Int32, Bool, String
+from std_msgs.msg import Int32, Bool, String, Int32MultiArray
 from ament_index_python.packages import get_package_share_directory
 
 def _add_path():
@@ -91,23 +91,21 @@ class PacmanGameNode(Node):
 
         # Odom state — initialised to spawn position
         self.pac_x = self._wx(pc); self.pac_y = self._wy(pr)
+        self.pac_yaw = 0.0
         self._got_odom = False
 
         # Committed target cell (cell-by-cell navigation)
-        self._tr = pr; self._tc = pc
-        self._tx = self._wx(pc); self._ty = self._wy(pr)
+        self._tr = pr; self._tc = pc          # current target grid cell
+        self._tx = self._wx(pc); self._ty = self._wy(pr)  # target world pos
+
+        # Total pellet counts
+        self.total_pellets = int(np.sum(self._np == PELLET))
+        self.total_power   = int(np.sum(self._np == POWER))
         self._dir_r = 0; self._dir_c = 0
         self._arrived   = True   # True = ready to pick next cell
         self._pellet_ok = False  # True = halfway pellet already collected for this cell
         self._steps  = 0
         self._state  = 'playing'
-
-        # Power-aura state
-        self._powered_prev  = False
-        self._aura_spawned  = False
-        self._aura_tick     = 0
-        self._spawn_cli     = None
-        self._set_state_cli = None
 
         # Ghost cell positions
         self.ghost_cells = {}
@@ -121,7 +119,7 @@ class PacmanGameNode(Node):
         self.state_p  = self.create_publisher(String, '/game/state',     10)
         self.power_p  = self.create_publisher(Bool,   '/game/powered',   10)
         self.steps_p  = self.create_publisher(Int32,  '/game/steps',     10)
-        self.pellet_p = self.create_publisher(Int32,  '/game/pellets_remaining', 10)
+        self.pellet_p = self.create_publisher(Int32MultiArray, '/game/pellets_remaining', 10)
 
         # Subscriptions
         self.create_subscription(Odometry,'/pacman/odom', self._pac_odom, 10)
@@ -145,6 +143,8 @@ class PacmanGameNode(Node):
     def _pac_odom(self, msg):
         self.pac_x = msg.pose.pose.position.x
         self.pac_y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        self.pac_yaw = math.atan2(2.0*(q.w*q.z + q.x*q.y), 1.0 - 2.0*(q.y*q.y + q.z*q.z))
         self._got_odom = True
 
     def _ghost_odom(self, msg, i):
@@ -162,12 +162,10 @@ class PacmanGameNode(Node):
         prefix = 'pel' if val == PELLET else 'pow'
         self._delete(f'{prefix}_{r}_{c}')
         if who == 'pacman':
-            pts = 10 if val == PELLET else 50
-            self.player.score += pts
             if val == POWER:
                 self.player.powered    = True
-                self.player.power_timer = 40
-                self.get_logger().info('POWER PELLET!')
+                self.player.power_timer = 200 # 10s at 20Hz
+                self.get_logger().info('⚡ POWER PELLET!')
 
     def _delete(self, name):
         try:
@@ -181,61 +179,6 @@ class PacmanGameNode(Node):
         req = DeleteEntity.Request(); req.name = name
         self._del_cli.call_async(req)
 
-    # ── Power aura (blue sphere that follows pacman when powered) ──────────
-    _AURA_SDF = (
-        "<sdf version='1.6'><model name='pacman_aura'>"
-        "<static>false</static><link name='link'>"
-        "<visual name='v'><geometry><sphere><radius>0.065</radius></sphere></geometry>"
-        "<material>"
-        "<ambient>0.0 0.3 1.0 0.7</ambient>"
-        "<diffuse>0.0 0.5 1.0 0.7</diffuse>"
-        "<emissive>0.0 0.2 0.9 1.0</emissive>"
-        "</material></visual></link></model></sdf>"
-    )
-
-    def _spawn_aura(self):
-        try:
-            from gazebo_msgs.srv import SpawnEntity
-        except ImportError:
-            return
-        if self._spawn_cli is None:
-            self._spawn_cli = self.create_client(SpawnEntity, '/spawn_entity')
-        if not self._spawn_cli.service_is_ready():
-            return
-        req = SpawnEntity.Request()
-        req.name = 'pacman_aura'
-        req.xml  = self._AURA_SDF
-        req.initial_pose.position.x = self.pac_x
-        req.initial_pose.position.y = self.pac_y
-        req.initial_pose.position.z = 0.05
-        self._spawn_cli.call_async(req).add_done_callback(
-            lambda _: setattr(self, '_aura_spawned', True))
-
-    def _move_aura(self):
-        self._aura_tick += 1
-        if self._aura_tick % 3 != 0:   # throttle to ~7 Hz
-            return
-        try:
-            from gazebo_msgs.srv import SetEntityState
-        except ImportError:
-            return
-        if self._set_state_cli is None:
-            self._set_state_cli = self.create_client(SetEntityState, '/set_entity_state')
-        if not self._set_state_cli.service_is_ready():
-            return
-        req = SetEntityState.Request()
-        req.state.name               = 'pacman_aura'
-        req.state.pose.position.x    = self.pac_x
-        req.state.pose.position.y    = self.pac_y
-        req.state.pose.position.z    = 0.05
-        req.state.pose.orientation.w = 1.0
-        req.state.reference_frame    = 'world'
-        self._set_state_cli.call_async(req)
-
-    def _delete_aura(self):
-        self._delete('pacman_aura')
-        self._aura_spawned = False
-
     # ── main loop (20 Hz) ──────────────────────────────────────────────────
     def _loop(self):
         if self._state != 'playing' or not self._got_odom:
@@ -243,14 +186,12 @@ class PacmanGameNode(Node):
 
         dist = math.hypot(self._tx - self.pac_x, self._ty - self.pac_y)
 
-        # 1. Collect pellet at halfway point (dist < cp/2 from cell centre)
-        if dist < self.cp / 2.0 and not self._pellet_ok:
+        # 1. Collect pellet when precisely crossing it (0.25m from center)
+        if dist < 0.25 and not self._pellet_ok:
             self._pellet_ok = True
             self._collect(self._tr, self._tc)
-            for gname, (gr, gc) in self.ghost_cells.items():
-                self._collect(gr, gc, who=gname)
 
-        # 2. Arrival: reached cell centre
+        # 2. Arrival: reached cell centre (tight threshold)
         if dist < ARRIVAL and not self._arrived:
             self._arrived = True
 
@@ -260,16 +201,6 @@ class PacmanGameNode(Node):
             self.player.col = self._tc
             self.player.update({})
             new_r, new_c = self.player.row, self.player.col
-
-            np_val = int(self._np[new_r, new_c])
-            if np_val in (PELLET, POWER) and self.player.grid[new_r][new_c] == EMPTY:
-                pfx = 'pel' if np_val == PELLET else 'pow'
-                self._delete(f'{pfx}_{new_r}_{new_c}')
-                self._np[new_r, new_c] = EMPTY
-                self.player.score += 10 if np_val == PELLET else 50
-                if np_val == POWER:
-                    self.player.powered = True
-                    self.player.power_timer = 40
 
             self._dir_r = new_r - self._tr
             self._dir_c = new_c - self._tc
@@ -281,33 +212,49 @@ class PacmanGameNode(Node):
             steps_msg = Int32(); steps_msg.data = self._steps
             self.steps_p.publish(steps_msg)
 
-        # 4. Pure cardinal velocity — one axis only
+        # 4. Correct for physical rotation and drift
         dx = self._tx - self.pac_x
         dy = self._ty - self.pac_y
         dist2 = math.hypot(dx, dy)
         twist = Twist()
+
+        # Fix yaw to 0 (P-controller)
+        yaw_err = 0.0 - getattr(self, 'pac_yaw', 0.0)
+        yaw_err = (yaw_err + math.pi) % (2 * math.pi) - math.pi
+        twist.angular.z = yaw_err * 3.0  # gentle rotation correction
+
+        # Transform world error (dx, dy) to robot's local frame
+        # If robot is rotated, we must apply forces in its rotated axes
+        yaw = getattr(self, 'pac_yaw', 0.0)
+        s = math.sin(-yaw)
+        c = math.cos(-yaw)
+        local_dx = dx * c - dy * s
+        local_dy = dx * s + dy * c
+
         if dist2 > 0.04:
-            if abs(dx) >= abs(dy):
-                twist.linear.x = math.copysign(self.speed, dx)
-                twist.linear.y = 0.0
+            # We determine dominant axis in the local frame
+            if abs(local_dx) >= abs(local_dy):
+                twist.linear.x = math.copysign(self.speed, local_dx)
+                twist.linear.y = local_dy * 3.0  # gentle proportional correction on off-axis
             else:
-                twist.linear.x = 0.0
-                twist.linear.y = math.copysign(self.speed, dy)
+                twist.linear.x = local_dx * 3.0  # gentle proportional correction on off-axis
+                twist.linear.y = math.copysign(self.speed, local_dy)
         self.pac_cmd.publish(twist)
 
-        # 5. Power aura
+        # Real-time power timer countdown
+        if self.player.powered:
+            self.player.power_timer -= 1
+            if self.player.power_timer <= 0:
+                self.player.powered = False
         now_powered = bool(self.player.powered)
-        if now_powered and not self._powered_prev:
-            self._spawn_aura()
-        elif not now_powered and self._powered_prev:
-            self._delete_aura()
-        elif now_powered and self._aura_spawned:
-            self._move_aura()
-        self._powered_prev = now_powered
 
         # 6. Game state topics
-        remaining = int(np.sum((self._np == PELLET) | (self._np == POWER)))
-        if remaining == 0:
+        rem_pellets = int(np.sum(self._np == PELLET))
+        rem_power   = int(np.sum(self._np == POWER))
+        consumed_pellets = self.total_pellets - rem_pellets
+        consumed_power   = self.total_power - rem_power
+
+        if rem_pellets + rem_power == 0:
             self._state = 'win'
             self.get_logger().info(
                 f'WIN! score={self.player.score} steps={self._steps}')
@@ -317,7 +264,9 @@ class PacmanGameNode(Node):
         self.state_p.publish(st_msg)
         pw_msg = Bool();     pw_msg.data = now_powered
         self.power_p.publish(pw_msg)
-        pl_msg = Int32();    pl_msg.data = remaining
+        
+        pl_msg = Int32MultiArray()
+        pl_msg.data = [consumed_pellets, self.total_pellets, consumed_power, self.total_power]
         self.pellet_p.publish(pl_msg)
 
 

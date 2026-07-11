@@ -39,7 +39,7 @@
 <!-- ── base_link (chassis) ──────────────────────────────────────── -->
 <link name="base_link">
   <inertial>
-    <origin xyz="0 0 0.033" rpy="0 0 0"/>
+    <origin xyz="0 0 0.01" rpy="0 0 0"/>
     <mass value="0.262"/>
     <inertia ixx="0.000205" iyy="0.000205" izz="0.000214"
              ixy="0" iyz="0" ixz="0"/>
