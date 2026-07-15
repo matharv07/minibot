@@ -22,13 +22,15 @@ install(
 )
 
 install(
-  PROGRAMS 
+  PROGRAMS
     scripts/omni_teleop.py
     scripts/sonar_to_laserscan.py
     scripts/scan_merger.py
-    scripts/generate_maze.py
+    scripts/maze_generator.py
+    scripts/nrf24_bridge.py
+    scripts/spawn_arena.py
     scripts/pacman_node.py
-    scripts/game_monitor.py
+    scripts/ghost_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
