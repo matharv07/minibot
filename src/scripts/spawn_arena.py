@@ -386,7 +386,8 @@ def main(args=None):
     pkg        = get_package_share_directory('minibot')
     xacro_path = os.path.join(pkg, 'urdf', 'minibot_game.xacro')
 
-    grid, player_start = generate_map(seed=42)
+    seed_val = int(os.environ.get('PACMAN_SEED', 42))
+    grid, player_start = generate_map(seed=seed_val)
     ghost_starts       = compute_ghost_starts(grid, player_start, N_GHOSTS)
 
     node = ArenaSpawner(grid, player_start, ghost_starts, xacro_path)

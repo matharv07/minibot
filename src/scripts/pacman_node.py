@@ -44,8 +44,11 @@ from maze_generator import (
 
 # ── Motion constants ──────────────────────────────────────────────────────────
 BOT_SPEED      = 2.0           # m/s
-ARRIVE_DIST    = CELL_SIZE * 0.30   # 0.105 m
-CELL_SNAP_DIST = 0.02           # m — publish zero cmd if already there
+ARRIVE_DIST    = 0.25          # m — early lookahead for smooth braking before turns
+CELL_SNAP_DIST = 0.01          # m — dead-band: zero cmd if closer than this
+CROSS_KP       = 6.0           # cross-axis P gain (gentle centering)
+DECEL_DIST     = 0.10          # m — start decelerating this far from target
+DECEL_MIN_SPD  = 0.35          # m/s — minimum speed during deceleration
 
 # ── Power pellet ──────────────────────────────────────────────────────────────
 POWER_TICKS   = 120         # 4 seconds at 30 Hz
@@ -105,7 +108,8 @@ class PacmanNode(Node):
         self._cbg = ReentrantCallbackGroup()
 
         # ── Map ──────────────────────────────────────────────────────────────
-        self._grid, self._start = generate_map(seed=42)
+        seed_val = int(os.environ.get('PACMAN_SEED', 42))
+        self._grid, self._start = generate_map(seed=seed_val)
         self._rows, self._cols  = self._grid.shape
         self._consumed: set     = set()
 
@@ -124,6 +128,7 @@ class PacmanNode(Node):
         # ── Physical state ────────────────────────────────────────────────────
         self._row, self._col = self._start
         self._x, self._y     = cell_center_world(self._row, self._col)
+        self._yaw            = 0.0
 
         # ── Game state ────────────────────────────────────────────────────────
         self._score         = 0
@@ -134,6 +139,8 @@ class PacmanNode(Node):
         self._pellets_eaten = 0
         self._power_eaten   = 0
         self._ghosts_eaten  = 0
+        self._ghosts_eaten_this_power = 0
+        self._last_points   = 0
 
         # ── Ghost knowledge (must be before first _choose_next_target call) ───
         self._ghost_pos:       dict = {i: None for i in range(N_GHOSTS)}
@@ -154,9 +161,11 @@ class PacmanNode(Node):
         # ── Navigation target ────────────────────────────────────────────────
         self._target_row = self._row
         self._target_col = self._col
-        self._need_next  = False
+        self._arrived    = True      # one-shot flag: True = at target, need new
+        self._centering  = False     # True = homing to cell centre before turning
+        self._centering_axis = 'x'
+        self._pending_target = (self._row, self._col)
         self._choose_next_target()   # prime first real target
-        self._need_next  = True
 
         # ── NRF dedup ─────────────────────────────────────────────────────────
         self._seen_ids: set = set()
@@ -189,6 +198,11 @@ class PacmanNode(Node):
         self._x = msg.pose.pose.position.x
         self._y = msg.pose.pose.position.y
         self._row, self._col = world_to_grid(self._x, self._y)
+        
+        q = msg.pose.pose.orientation
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        self._yaw = math.atan2(siny_cosp, cosy_cosp)
 
     def _nrf_rx_cb(self, msg: String):
         try:
@@ -226,11 +240,14 @@ class PacmanNode(Node):
         if cell == PELLET:
             self._score        += 10
             self._pellets_eaten += 1
+            self._last_points   = 10
         else:
             self._score        += 50
             self._power_eaten  += 1
+            self._last_points   = 50
             self._powered       = True
             self._power_timer   = POWER_TICKS
+            self._ghosts_eaten_this_power = 0
             # Invalidate pathfinder cache (grid changed significantly)
             if self._pf is not None:
                 try:
@@ -239,16 +256,40 @@ class PacmanNode(Node):
                 except Exception:
                     pass
 
+        # Flush momentum info to prevent rubber-banding artifacts (matches pacman.py)
+        self._m_row = self._m_col = 0.0
+        self._v_row = self._v_col = 0.0
+        self._adam_t = 0
+
         prefix    = 'power' if cell == POWER else 'pellet'
         entity    = f'pellet_field::{prefix}_{row}_{col}'
+        wx, wy, _ = grid_to_world(row, col)
         if self._set_state.service_is_ready():
             req   = SetEntityState.Request()
             state = EntityState()
             state.name = entity
+            state.pose.position.x = wx
+            state.pose.position.y = wy
             state.pose.position.z = -2.0
             state.pose.orientation.w = 1.0
             req.state = state
-            self._set_state.call_async(req)
+            future = self._set_state.call_async(req)
+            future.add_done_callback(
+                lambda f, e=entity: self._on_set_state_done(f, e)
+            )
+        else:
+            self.get_logger().warn(f'SetEntityState service NOT ready — cannot hide {entity}')
+
+    def _on_set_state_done(self, future, entity_name):
+        """Log result of SetEntityState call for debugging pellet removal."""
+        try:
+            res = future.result()
+            if res is not None and not res.success:
+                self.get_logger().error(
+                    f'SetEntityState FAILED for [{entity_name}] — entity not found in Gazebo')
+        except Exception as exc:
+            self.get_logger().error(
+                f'SetEntityState exception for [{entity_name}]: {exc}')
 
     # ── Adam potential-field navigator ────────────────────────────────────────
 
@@ -312,7 +353,7 @@ class PacmanNode(Node):
         Adam-momentum potential-field step (mirrors pacman.py Player.update AUTO_MODE).
         Sets self._target_row / _target_col to the best adjacent non-wall cell.
         """
-        cr, cc = self._target_row, self._target_col
+        cr, cc = self._target_row, self._target_col  # Plan from the cell we are arriving at
 
         # Ghost maps
         ghost_maps = self._ghost_maps_scipy()
@@ -453,7 +494,9 @@ class PacmanNode(Node):
                 self._dead = False
                 self._row, self._col = self._start
                 self._target_row, self._target_col = self._start
-                self._need_next = True
+                self._arrived   = True
+                self._centering = False
+                self._centering_axis = 'x'
                 self._powered   = False
                 self._power_timer = 0
                 self._m_row = self._m_col = 0.0
@@ -468,18 +511,71 @@ class PacmanNode(Node):
         if math.hypot(self._x - cx, self._y - cy) < PELLET_RADIUS:
             self._try_consume(self._row, self._col)
 
-        # Arrival → choose next target
+        # Check ghost collisions
+        for gid, pos in self._ghost_pos.items():
+            if pos is None:
+                continue
+            if self._tick - self._ghost_last_seen.get(gid, 0) > GHOST_TIMEOUT:
+                continue
+            gr, gc = pos
+            if self._row == gr and self._col == gc:
+                if self._powered:
+                    points = 200 * (2 ** self._ghosts_eaten_this_power)
+                    self._score += points
+                    self._last_points = points
+                    self._ghosts_eaten += 1
+                    self._ghosts_eaten_this_power += 1
+                    self.get_logger().info(f'ATE GHOST {gid}! +{points} points. Score: {self._score}')
+                    self._ghost_pos[gid] = None
+                    if self._set_state.service_is_ready():
+                        req = SetEntityState.Request()
+                        req.state.name = GHOST_NAMES[gid]
+                        sx, sy, _ = grid_to_world(self._start[0], self._start[1])
+                        req.state.pose.position.x = sx
+                        req.state.pose.position.y = sy
+                        req.state.pose.position.z = 5.0
+                        self._set_state.call_async(req)
+                else:
+                    if not self._dead:
+                        self.get_logger().info(f'DIED to ghost {gid}!')
+                        self._dead = True
+                        self._dead_timer = 60
+
+        # Arrival → choose next target (one-shot: fires once per cell)
         tx, ty = cell_center_world(self._target_row, self._target_col)
         dist   = math.hypot(self._x - tx, self._y - ty)
 
-        if dist < ARRIVE_DIST and self._need_next:
-            self._need_next = False
-            self._choose_next_target()
-            tx, ty = cell_center_world(self._target_row, self._target_col)
-            dist   = math.hypot(self._x - tx, self._y - ty)
+        if dist < ARRIVE_DIST:
+            if not self._arrived:
+                self._arrived = True
+                old_dir = self._nav_dir
+                intersect_r = self._target_row
+                intersect_c = self._target_col
+                self._choose_next_target()
 
-        if dist >= ARRIVE_DIST:
-            self._need_next = True
+                # Direction changed → center on intersection cell before turning
+                if self._nav_dir != old_dir:
+                    self._pending_target = (self._target_row, self._target_col)
+                    self._target_row = intersect_r
+                    self._target_col = intersect_c
+                    self._centering  = True
+                    self._centering_axis = 'x' if old_dir[1] != 0 else 'y'
+
+                tx, ty = cell_center_world(self._target_row, self._target_col)
+        else:
+            self._arrived = False
+
+        # Centering complete → proceed to the real next-cell target
+        if self._centering:
+            cx, cy = cell_center_world(self._target_row, self._target_col)
+            err_c = (self._x - cx) if self._centering_axis == 'x' else (self._y - cy)
+            if abs(err_c) < CELL_SNAP_DIST:
+                self._centering  = False
+                self._teleport_self(cx, cy)
+                self._target_row = self._pending_target[0]
+                self._target_col = self._pending_target[1]
+                self._arrived    = False
+                tx, ty = cell_center_world(self._target_row, self._target_col)
 
         # Motion command
         self._cmd_pub.publish(self._compute_cmd(tx, ty))
@@ -502,6 +598,7 @@ class PacmanNode(Node):
                 'ghosts_eaten': int(self._ghosts_eaten),
                 'speed': BOT_SPEED,
                 'target': [int(self._target_row), int(self._target_col)],
+                'last_points': int(self._last_points),
             })))
 
         # NRF heartbeat
@@ -518,23 +615,60 @@ class PacmanNode(Node):
         if self._tick % 150 == 0:
             pl = int(np.sum(np.isin(self._grid, [PELLET, POWER])))
             self.get_logger().info(
-                f'score={self._score} powered={self._powered}({self._power_timer}t) '
+                f'score={self._score} powered={self._powered}({self._power_timer}t) ghosts_eaten={self._ghosts_eaten} '
                 f'cell=({self._row},{self._col})→({self._target_row},{self._target_col}) '
                 f'pellets_left={pl} dist={dist:.3f}m macro={self._macro_mode}'
             )
 
-    # ── Motion controller ─────────────────────────────────────────────────────
+    # ── Motion controller (straight-line only) ────────────────────────────────
 
     def _compute_cmd(self, tx: float, ty: float) -> Twist:
+        """Strictly orthogonal warehouse-bot movement."""
         cmd   = Twist()
         err_x = tx - self._x
         err_y = ty - self._y
         dist  = math.hypot(err_x, err_y)
+
         if dist < CELL_SNAP_DIST:
+            cmd.angular.z = -15.0 * self._yaw
             return cmd
-        cmd.linear.x  = (err_x / dist) * BOT_SPEED
-        cmd.linear.y  = (err_y / dist) * BOT_SPEED
-        cmd.angular.z = 0.0
+
+        dr, dc = self._nav_dir
+
+        vx = 0.0
+        vy = 0.0
+
+        if self._centering:
+            # Centering phase: just move on the primary axis to prevent diagonal movement
+            p_gain = BOT_SPEED / ARRIVE_DIST
+            if self._centering_axis == 'x':
+                vx_raw = err_x * p_gain
+                vx = math.copysign(max(DECEL_MIN_SPD, min(BOT_SPEED, abs(vx_raw))), vx_raw)
+                vy = 0.0
+            else:
+                vy_raw = err_y * p_gain
+                vx = 0.0
+                vy = math.copysign(max(DECEL_MIN_SPD, min(BOT_SPEED, abs(vy_raw))), vy_raw)
+        else:
+            # Regular movement along grid axes
+            speed = BOT_SPEED
+            
+            if dc != 0:
+                vx = math.copysign(speed, err_x)
+                vy = 0.0
+            elif dr != 0:
+                vy = math.copysign(speed, err_y)
+                vx = 0.0
+
+        # World → body frame (yaw held ≈ 0 by strong P-lock below)
+        cos_y = math.cos(self._yaw)
+        sin_y = math.sin(self._yaw)
+        cmd.linear.x =  vx * cos_y + vy * sin_y
+        cmd.linear.y = -vx * sin_y + vy * cos_y
+
+        # Strong yaw lock to 0
+        cmd.angular.z = -15.0 * self._yaw
+
         return cmd
 
     def _teleport_self(self, x: float, y: float, z: float = SPAWN_Z):
