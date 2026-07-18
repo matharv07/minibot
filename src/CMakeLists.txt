@@ -12,6 +12,7 @@ install(
     meshes
     urdf
     pacmanbot
+    worlds
   DESTINATION share/${PROJECT_NAME}
 )
 

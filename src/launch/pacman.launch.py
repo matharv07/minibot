@@ -108,6 +108,8 @@ def generate_launch_description():
         'GAZEBO_MODEL_DATABASE_URI': '',
         'GAZEBO_IP':         '127.0.0.1',
         'GAZEBO_MASTER_URI': 'http://127.0.0.1:11345',
+        'LIBGL_ALWAYS_SOFTWARE': '1',
+        'OGRE_RTT_MODE': 'Copy',
     }
 
     # PYTHONPATH for every child process so they can import maze_generator
@@ -126,7 +128,7 @@ def generate_launch_description():
     os.environ['GAZEBO_MODEL_PATH'] = gz_env['GAZEBO_MODEL_PATH']
     
     gazebo_ros_dir = get_package_share_directory('gazebo_ros')
-    world = os.path.join(gazebo_ros_dir, 'worlds', 'empty.world')
+    world = os.path.join(pkg, 'worlds', 'pacman_empty.world')
 
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -135,7 +137,6 @@ def generate_launch_description():
         launch_arguments={
             'world': world,
             'pause': LaunchConfiguration('paused'),
-            # Plugins are automatically loaded by gazebo.launch.py
         }.items()
     )
 

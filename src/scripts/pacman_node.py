@@ -52,7 +52,7 @@ DECEL_MIN_SPD  = 0.35          # m/s — minimum speed during deceleration
 
 # ── Power pellet ──────────────────────────────────────────────────────────────
 POWER_TICKS   = 120         # 4 seconds at 30 Hz
-PELLET_RADIUS = CELL_SIZE * 0.6
+PELLET_RADIUS = 0.075       # 7.5 cm (approx bot physical radius)
 
 # ── NRF ───────────────────────────────────────────────────────────────────────
 HEARTBEAT_EVERY = 15        # 0.5 seconds at 30 Hz
@@ -186,7 +186,7 @@ class PacmanNode(Node):
                                  self._nrf_rx_cb, 20, callback_group=self._cbg)
 
         # ── Gazebo service ────────────────────────────────────────────────────
-        self._set_state = self.create_client(SetEntityState, '/gazebo/set_entity_state')
+        self._set_state = self.create_client(SetEntityState, '/set_entity_state')
 
         # ── 30 Hz control loop ────────────────────────────────────────────────
         self.create_timer(1.0 / 30.0, self._control_loop, callback_group=self._cbg)
@@ -600,6 +600,7 @@ class PacmanNode(Node):
                 'target': [int(self._target_row), int(self._target_col)],
                 'last_points': int(self._last_points),
             })))
+            self._last_points = 0
 
         # NRF heartbeat
         if self._tick % HEARTBEAT_EVERY == 0:
