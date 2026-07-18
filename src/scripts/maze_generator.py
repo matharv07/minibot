@@ -36,8 +36,8 @@ BOT_HEIGHT   = 0.07       # m  (approx. chassis height)
 SPAWN_Z      = 0.035      # m  (nominal spawn height from launch file)
 
 # Float pellets higher above the bots (realistic floating candy look)
-PELLET_Z     = SPAWN_Z + 0.075   # ~11 cm — above bot chassis top
-POWER_Z      = SPAWN_Z + 0.085   # slightly higher than regular pellets
+PELLET_Z     = SPAWN_Z + 0.085   # ~12 cm — above bot chassis top, clear of 2D lidar
+POWER_Z      = SPAWN_Z + 0.095   # slightly higher than regular pellets
 
 # ── NRF24L01 communication radius ────────────────────────────────────────────
 NRF_RADIUS_CELLS  = 12               # from ghost.py RADIUS constant
