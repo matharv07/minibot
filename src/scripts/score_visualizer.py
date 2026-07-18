@@ -174,9 +174,11 @@ class ScoreVisualizer(Node):
 
         # Score
         score_color = FG_ORANGE if score > 0 else FG_WHITE
-        lines.append(row_line('SCORE',
-                               f'{score:>8,}   (best: {self._high_score:,})',
-                               score_color))
+        last_points = s.get('last_points', 0)
+        score_text = f'{score:>8,}   (best: {self._high_score:,})'
+        if last_points > 0:
+            score_text += f'   [ +{last_points} pts ]'
+        lines.append(row_line('SCORE', score_text, score_color))
 
         # Power state
         if powered:
