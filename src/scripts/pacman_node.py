@@ -28,7 +28,6 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Bool
 from gazebo_msgs.srv import SetEntityState
 from gazebo_msgs.msg import EntityState
-from std_srvs.srv import Empty
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
@@ -143,12 +142,9 @@ class PacmanNode(Node):
         self._ghosts_eaten_this_power = 0
         self._last_points   = 0
 
-        # ── Ghost knowledge (NRF beliefs for navigation) ──────────────────────
+        # ── Ghost knowledge (must be before first _choose_next_target call) ───
         self._ghost_pos:       dict = {i: None for i in range(N_GHOSTS)}
         self._ghost_last_seen: dict = {}
-
-        # ── True ghost positions for game termination (independent of NRF) ────
-        self._true_ghost_pos:  dict = {}
 
         # ── Adam navigator state (mirrors Player in pacman.py) ────────────────
         self._nav_dir    = (0, 1)   # initial heading: RIGHT
@@ -188,17 +184,9 @@ class PacmanNode(Node):
                                  self._odom_cb, 10, callback_group=self._cbg)
         self.create_subscription(String, f'/nrf24/{PACMAN_NAME}/rx',
                                  self._nrf_rx_cb, 20, callback_group=self._cbg)
-        
-        for gid in range(N_GHOSTS):
-            self.create_subscription(
-                Odometry, f'/{GHOST_NAMES[gid]}/odom',
-                lambda msg, g=gid: self._true_ghost_odom_cb(msg, g),
-                10, callback_group=self._cbg
-            )
 
         # ── Gazebo service ────────────────────────────────────────────────────
         self._set_state = self.create_client(SetEntityState, '/set_entity_state')
-        self._reset_client = self.create_client(Empty, '/reset_world')
 
         # ── 30 Hz control loop ────────────────────────────────────────────────
         self.create_timer(1.0 / 30.0, self._control_loop, callback_group=self._cbg)
@@ -215,13 +203,6 @@ class PacmanNode(Node):
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         self._yaw = math.atan2(siny_cosp, cosy_cosp)
-
-    def _true_ghost_odom_cb(self, msg: Odometry, gid: int):
-        self._true_ghost_pos[gid] = (
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y,
-            msg.pose.pose.position.z
-        )
 
     def _nrf_rx_cb(self, msg: String):
         try:
@@ -511,21 +492,6 @@ class PacmanNode(Node):
             self._dead_timer -= 1
             if self._dead_timer <= 0:
                 self._dead = False
-                
-                if self._reset_client.service_is_ready():
-                    self._reset_client.call_async(Empty.Request())
-                else:
-                    self.get_logger().warn('reset_world service not ready')
-                    
-                seed_val = int(os.environ.get('PACMAN_SEED', 42))
-                self._grid, self._start = generate_map(seed=seed_val)
-                self._consumed.clear()
-                self._score = 0
-                self._pellets_eaten = 0
-                self._power_eaten = 0
-                self._ghosts_eaten = 0
-                self._ghosts_eaten_this_power = 0
-                
                 self._row, self._col = self._start
                 self._target_row, self._target_col = self._start
                 self._arrived   = True
@@ -536,10 +502,7 @@ class PacmanNode(Node):
                 self._m_row = self._m_col = 0.0
                 self._v_row = self._v_col = 0.0
                 self._adam_t = 0
-                
-                self._ghost_pos = {i: None for i in range(N_GHOSTS)}
-                self._ghost_last_seen.clear()
-                
+                self._teleport_self(*grid_to_world(self._row, self._col))
             self._cmd_pub.publish(Twist())
             return
 
@@ -548,14 +511,14 @@ class PacmanNode(Node):
         if math.hypot(self._x - cx, self._y - cy) < PELLET_RADIUS:
             self._try_consume(self._row, self._col)
 
-        # Check ghost collisions using GROUND TRUTH (bypassing NRF beliefs)
-        for gid, pose in self._true_ghost_pos.items():
-            gx, gy, gz = pose
-            if gz < -1.0:
-                continue # Ghost is dead
-                
-            dist_to_ghost = math.hypot(self._x - gx, self._y - gy)
-            if dist_to_ghost < 0.15:
+        # Check ghost collisions
+        for gid, pos in self._ghost_pos.items():
+            if pos is None:
+                continue
+            if self._tick - self._ghost_last_seen.get(gid, 0) > GHOST_TIMEOUT:
+                continue
+            gr, gc = pos
+            if self._row == gr and self._col == gc:
                 if self._powered:
                     points = 200 * (2 ** self._ghosts_eaten_this_power)
                     self._score += points
@@ -563,21 +526,20 @@ class PacmanNode(Node):
                     self._ghosts_eaten += 1
                     self._ghosts_eaten_this_power += 1
                     self.get_logger().info(f'ATE GHOST {gid}! +{points} points. Score: {self._score}')
-                    self._true_ghost_pos[gid] = (gx, gy, -2.0) # Local optimistic update
-                    
+                    self._ghost_pos[gid] = None
                     if self._set_state.service_is_ready():
                         req = SetEntityState.Request()
                         req.state.name = GHOST_NAMES[gid]
-                        req.state.pose.position.x = gx
-                        req.state.pose.position.y = gy
-                        req.state.pose.position.z = -2.0
-                        req.state.pose.orientation.w = 1.0
+                        sx, sy, _ = grid_to_world(self._start[0], self._start[1])
+                        req.state.pose.position.x = sx
+                        req.state.pose.position.y = sy
+                        req.state.pose.position.z = 5.0
                         self._set_state.call_async(req)
                 else:
                     if not self._dead:
                         self.get_logger().info(f'DIED to ghost {gid}!')
                         self._dead = True
-                        self._dead_timer = 150
+                        self._dead_timer = 60
 
         # Arrival → choose next target (one-shot: fires once per cell)
         tx, ty = cell_center_world(self._target_row, self._target_col)

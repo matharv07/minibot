@@ -270,34 +270,17 @@ class ArenaSpawner(Node):
                 radius = PELLET_R
                 z      = PELLET_Z
                 cr, cg, cb = 1.0, 1.0, 1.0    # white
-                er, eg, eb = cr * 0.65, cg * 0.65, cb * 0.65
-                
-                xml.append(f"""
-    <link name="{name}">
-      <pose>{wx:.6f} {wy:.6f} {z:.6f} 0 0 0</pose>
-      <gravity>false</gravity>
-      <inertial><mass>0.001</mass></inertial>
-      <collision name="col">
-        <geometry><sphere><radius>{radius}</radius></sphere></geometry>
-        <surface><contact><collide_without_contact>true</collide_without_contact></contact></surface>
-      </collision>
-      <visual name="vis">
-        <geometry><sphere><radius>{radius}</radius></sphere></geometry>
-        <material>
-          <ambient>{cr} {cg} {cb} 1</ambient>
-          <diffuse>{cr} {cg} {cb} 1</diffuse>
-          <emissive>{er:.3f} {eg:.3f} {eb:.3f} 1</emissive>
-        </material>
-      </visual>
-    </link>""")
             else:
                 name   = f'power_{r}_{c}'
                 radius = POWER_R
                 z      = POWER_Z
                 cr, cg, cb = 1.0, 0.84, 0.0   # gold
-                er, eg, eb = cr * 0.65, cg * 0.65, cb * 0.65
 
-                xml.append(f"""
+            er = cr * 0.65
+            eg = cg * 0.65
+            eb = cb * 0.65
+
+            xml.append(f"""
     <link name="{name}">
       <pose>{wx:.6f} {wy:.6f} {z:.6f} 0 0 0</pose>
       <gravity>false</gravity>
@@ -312,32 +295,6 @@ class ArenaSpawner(Node):
           <ambient>{cr} {cg} {cb} 1</ambient>
           <diffuse>{cr} {cg} {cb} 1</diffuse>
           <emissive>{er:.3f} {eg:.3f} {eb:.3f} 1</emissive>
-        </material>
-      </visual>
-    </link>""")
-    
-                # ALSO spawn a hidden normal pellet for conversion
-                name_h   = f'pellet_{r}_{c}'
-                radius_h = PELLET_R
-                z_h      = -2.0
-                cr_h, cg_h, cb_h = 1.0, 1.0, 1.0
-                er_h, eg_h, eb_h = cr_h * 0.65, cg_h * 0.65, cb_h * 0.65
-                
-                xml.append(f"""
-    <link name="{name_h}">
-      <pose>{wx:.6f} {wy:.6f} {z_h:.6f} 0 0 0</pose>
-      <gravity>false</gravity>
-      <inertial><mass>0.001</mass></inertial>
-      <collision name="col_h">
-        <geometry><sphere><radius>{radius_h}</radius></sphere></geometry>
-        <surface><contact><collide_without_contact>true</collide_without_contact></contact></surface>
-      </collision>
-      <visual name="vis_h">
-        <geometry><sphere><radius>{radius_h}</radius></sphere></geometry>
-        <material>
-          <ambient>{cr_h} {cg_h} {cb_h} 1</ambient>
-          <diffuse>{cr_h} {cg_h} {cb_h} 1</diffuse>
-          <emissive>{er_h:.3f} {eg_h:.3f} {eb_h:.3f} 1</emissive>
         </material>
       </visual>
     </link>""")
