@@ -141,6 +141,7 @@ class ScoreVisualizer(Node):
         pellets_left = s.get('pellets_left', 0)
         pellets_eat  = s.get('pellets_eaten', 0)
         power_eat    = s.get('power_eaten', 0)
+        power_neut   = s.get('power_neutralised', 0)
         ghosts_eat   = s.get('ghosts_eaten', 0)
         speed        = s.get('speed', 0.0)
         tick         = s.get('tick', 0)
@@ -204,6 +205,7 @@ class ScoreVisualizer(Node):
 
         lines.append(row_line('PELLETS EATEN',  f'{pellets_eat:>4}', FG_WHITE))
         lines.append(row_line('POWER EATEN',    f'{power_eat:>4}', FG_MAGENTA))
+        lines.append(row_line('POWER NEUTRAL.', f'{power_neut:>4}', FG_YELLOW))
         lines.append(row_line('GHOSTS EATEN',   f'{ghosts_eat:>4}', FG_RED))
 
         lines.append(row_line('BOT SPEED',

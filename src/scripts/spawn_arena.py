@@ -270,17 +270,8 @@ class ArenaSpawner(Node):
                 radius = PELLET_R
                 z      = PELLET_Z
                 cr, cg, cb = 1.0, 1.0, 1.0    # white
-            else:
-                name   = f'power_{r}_{c}'
-                radius = POWER_R
-                z      = POWER_Z
-                cr, cg, cb = 1.0, 0.84, 0.0   # gold
-
-            er = cr * 0.65
-            eg = cg * 0.65
-            eb = cb * 0.65
-
-            xml.append(f"""
+                er, eg, eb = cr * 0.65, cg * 0.65, cb * 0.65
+                xml.append(f"""
     <link name="{name}">
       <pose>{wx:.6f} {wy:.6f} {z:.6f} 0 0 0</pose>
       <gravity>false</gravity>
@@ -295,6 +286,52 @@ class ArenaSpawner(Node):
           <ambient>{cr} {cg} {cb} 1</ambient>
           <diffuse>{cr} {cg} {cb} 1</diffuse>
           <emissive>{er:.3f} {eg:.3f} {eb:.3f} 1</emissive>
+        </material>
+      </visual>
+    </link>""")
+            else:
+                # 1. Inner normal pellet
+                name_pellet = f'pellet_{r}_{c}'
+                pr_cr, pr_cg, pr_cb = 1.0, 1.0, 1.0
+                pr_er, pr_eg, pr_eb = 0.65, 0.65, 0.65
+                xml.append(f"""
+    <link name="{name_pellet}">
+      <pose>{wx:.6f} {wy:.6f} {PELLET_Z:.6f} 0 0 0</pose>
+      <gravity>false</gravity>
+      <inertial><mass>0.001</mass></inertial>
+      <collision name="col">
+        <geometry><sphere><radius>{PELLET_R}</radius></sphere></geometry>
+        <surface><contact><collide_without_contact>true</collide_without_contact></contact></surface>
+      </collision>
+      <visual name="vis">
+        <geometry><sphere><radius>{PELLET_R}</radius></sphere></geometry>
+        <material>
+          <ambient>{pr_cr} {pr_cg} {pr_cb} 1</ambient>
+          <diffuse>{pr_cr} {pr_cg} {pr_cb} 1</diffuse>
+          <emissive>{pr_er:.3f} {pr_eg:.3f} {pr_eb:.3f} 1</emissive>
+        </material>
+      </visual>
+    </link>""")
+                
+                # 2. Outer power pellet
+                name_power = f'power_{r}_{c}'
+                pw_cr, pw_cg, pw_cb = 1.0, 0.84, 0.0
+                pw_er, pw_eg, pw_eb = pw_cr * 0.65, pw_cg * 0.65, pw_cb * 0.65
+                xml.append(f"""
+    <link name="{name_power}">
+      <pose>{wx:.6f} {wy:.6f} {POWER_Z:.6f} 0 0 0</pose>
+      <gravity>false</gravity>
+      <inertial><mass>0.001</mass></inertial>
+      <collision name="col">
+        <geometry><sphere><radius>{POWER_R}</radius></sphere></geometry>
+        <surface><contact><collide_without_contact>true</collide_without_contact></contact></surface>
+      </collision>
+      <visual name="vis">
+        <geometry><sphere><radius>{POWER_R}</radius></sphere></geometry>
+        <material>
+          <ambient>{pw_cr} {pw_cg} {pw_cb} 1</ambient>
+          <diffuse>{pw_cr} {pw_cg} {pw_cb} 1</diffuse>
+          <emissive>{pw_er:.3f} {pw_eg:.3f} {pw_eb:.3f} 1</emissive>
         </material>
       </visual>
     </link>""")

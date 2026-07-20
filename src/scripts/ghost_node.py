@@ -721,6 +721,10 @@ class GhostNode(Node):
                 self.row = intersect_r
                 self.col = intersect_c
                 
+                if self.grid[self.row, self.col] == POWER:
+                    self.grid[self.row, self.col] = PELLET
+                
+                
                 dr, dc = self._choose_next_dir()
                 self._nav_dir = (dr, dc)
                 

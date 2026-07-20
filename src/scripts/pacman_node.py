@@ -143,6 +143,7 @@ class PacmanNode(Node):
         self._ghosts_eaten  = 0
         self._ghosts_eaten_this_power = 0
         self._last_points   = 0
+        self._power_neutralised = 0
 
         # ── Ghost knowledge (must be before first _choose_next_target call) ───
         self._ghost_pos:       dict = {i: None for i in range(N_GHOSTS)}
@@ -264,22 +265,29 @@ class PacmanNode(Node):
         self._v_row = self._v_col = 0.0
         self._adam_t = 0
 
-        prefix    = 'power' if cell == POWER else 'pellet'
-        entity    = f'pellet_field::{prefix}_{row}_{col}'
         wx, wy, _ = grid_to_world(row, col)
+        
+        entities_to_hide = []
+        if cell == POWER:
+            entities_to_hide.append(f'pellet_field::power_{row}_{col}')
+            entities_to_hide.append(f'pellet_field::pellet_{row}_{col}')
+        else:
+            entities_to_hide.append(f'pellet_field::pellet_{row}_{col}')
+            
         if self._set_state.service_is_ready():
-            req   = SetEntityState.Request()
-            state = EntityState()
-            state.name = entity
-            state.pose.position.x = wx
-            state.pose.position.y = wy
-            state.pose.position.z = -2.0
-            state.pose.orientation.w = 1.0
-            req.state = state
-            future = self._set_state.call_async(req)
-            future.add_done_callback(
-                lambda f, e=entity: self._on_set_state_done(f, e)
-            )
+            for entity in entities_to_hide:
+                req   = SetEntityState.Request()
+                state = EntityState()
+                state.name = entity
+                state.pose.position.x = wx
+                state.pose.position.y = wy
+                state.pose.position.z = -2.0
+                state.pose.orientation.w = 1.0
+                req.state = state
+                future = self._set_state.call_async(req)
+                future.add_done_callback(
+                    lambda f, e=entity: self._on_set_state_done(f, e)
+                )
         else:
             self.get_logger().warn(f'SetEntityState service NOT ready — cannot hide {entity}')
 
@@ -521,6 +529,23 @@ class PacmanNode(Node):
             if self._tick - self._ghost_last_seen.get(gid, 0) > GHOST_TIMEOUT:
                 continue
             gr, gc = pos
+            
+            if self._grid[gr, gc] == POWER:
+                self._grid[gr, gc] = PELLET
+                self._power_neutralised += 1
+                
+                wx, wy, _ = grid_to_world(gr, gc)
+                if self._set_state.service_is_ready():
+                    req   = SetEntityState.Request()
+                    state = EntityState()
+                    state.name = f'pellet_field::power_{gr}_{gc}'
+                    state.pose.position.x = wx
+                    state.pose.position.y = wy
+                    state.pose.position.z = -2.0
+                    state.pose.orientation.w = 1.0
+                    req.state = state
+                    self._set_state.call_async(req)
+                    
             if self._row == gr and self._col == gc:
                 if self._powered:
                     points = 200 * (2 ** self._ghosts_eaten_this_power)
@@ -599,6 +624,7 @@ class PacmanNode(Node):
                 'row': int(self._row), 'col': int(self._col), 'pellets_left': pl,
                 'pellets_eaten': int(self._pellets_eaten),
                 'power_eaten': int(self._power_eaten),
+                'power_neutralised': int(self._power_neutralised),
                 'ghosts_eaten': int(self._ghosts_eaten),
                 'speed': BOT_SPEED,
                 'target': [int(self._target_row), int(self._target_col)],
