@@ -250,7 +250,7 @@ class PacmanNode(Node):
             self._power_eaten  += 1
             self._last_points   = 50
             self._powered       = True
-            self._power_timer   = POWER_TICKS
+            self._power_expiry_tick = self._tick + POWER_TICKS
             self._ghosts_eaten_this_power = 0
             # Invalidate pathfinder cache (grid changed significantly)
             if self._pf is not None:
@@ -490,12 +490,14 @@ class PacmanNode(Node):
     # ── Main control loop (10 Hz) ─────────────────────────────────────────────
 
     def _control_loop(self):
-        self._tick += 1
+            
+        # Kinetic/tick based absolute frame syncing to Gazebo clock
+        current_time_ns = self.get_clock().now().nanoseconds
+        self._tick = int(current_time_ns / (1e9 / 30.0))
 
         # Power timer
         if self._powered:
-            self._power_timer -= 1
-            if self._power_timer <= 0:
+            if self._tick >= self._power_expiry_tick:
                 self._powered = False
 
         # Death recovery
@@ -617,9 +619,10 @@ class PacmanNode(Node):
         # Stats (every 9 ticks ≈ 3.3 Hz)
         if self._tick % 9 == 0:
             pl = int(np.sum(np.isin(self._grid, [PELLET, POWER])))
+            rem_timer = max(0, int(getattr(self, '_power_expiry_tick', 0) - self._tick)) if self._powered else 0
             self._stats_pub.publish(String(data=json.dumps({
                 'tick': int(self._tick), 'score': int(self._score),
-                'powered': self._powered, 'power_timer': int(self._power_timer),
+                'powered': self._powered, 'power_timer': rem_timer,
                 'power_timer_max': int(POWER_TICKS),
                 'row': int(self._row), 'col': int(self._col), 'pellets_left': pl,
                 'pellets_eaten': int(self._pellets_eaten),
@@ -645,8 +648,9 @@ class PacmanNode(Node):
         # Periodic log (every 150 ticks = 5s)
         if self._tick % 150 == 0:
             pl = int(np.sum(np.isin(self._grid, [PELLET, POWER])))
+            rem_timer = max(0, int(getattr(self, '_power_expiry_tick', 0) - self._tick)) if self._powered else 0
             self.get_logger().info(
-                f'score={self._score} powered={self._powered}({self._power_timer}t) ghosts_eaten={self._ghosts_eaten} '
+                f'score={self._score} powered={self._powered}({rem_timer}t) ghosts_eaten={self._ghosts_eaten} '
                 f'cell=({self._row},{self._col})→({self._target_row},{self._target_col}) '
                 f'pellets_left={pl} dist={dist:.3f}m macro={self._macro_mode}'
             )

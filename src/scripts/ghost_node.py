@@ -85,12 +85,12 @@ class GhostNode(Node):
         self._cols = len(self.grid[0])
         
         self.personal_map = np.full((self._rows, self._cols), UNKNOWN, dtype=np.int8)
-        self.last_seen = np.full((self._rows, self._cols), -1, dtype=np.int32)
+        self.last_seen = np.full((self._rows, self._cols), -1, dtype=np.int64)
         self.known_agents = {i: "UNKNOWN" for i in range(MAX_GHOSTS)}
         self.frame = 0
         
         self.pacman_powered = False
-        self.pacman_power_timer = 0
+        self.pacman_power_expiry_frame = 0
         self.known_pacman = None
         self.pacman_last_seen = -1
         self.last_lost_pacman = None
@@ -188,9 +188,7 @@ class GhostNode(Node):
         self._pacman_pos_topic = (int(round(msg.x)), int(round(msg.y)))
 
     def _pac_pow_cb(self, msg: Bool):
-        if msg.data and not self.pacman_powered:
-            self.pacman_power_timer = 210
-        self.pacman_powered = msg.data
+        self._pacman_pow_topic = msg.data
 
     def _scan_cb(self, msg, yaw_offset):
         angle = msg.angle_min
@@ -299,7 +297,13 @@ class GhostNode(Node):
             
         pacman_diff = None
         if pacman_spotted and self._pacman_pos_topic:
+            pow_st = getattr(self, '_pacman_pow_topic', False)
             self.known_pacman = self._pacman_pos_topic
+            if pow_st and not self.pacman_powered:
+                self.pacman_power_expiry_frame = self.frame + 210
+            self.pacman_powered = pow_st
+            if not pow_st:
+                self.pacman_power_expiry_frame = 0
             self.pacman_last_seen = self.frame
             pacman_diff = ("pacman", int(self.known_pacman[0]), int(self.known_pacman[1]), bool(self.pacman_powered), int(self.frame))
         elif self.known_pacman and self.known_pacman in visible:
@@ -435,9 +439,11 @@ class GhostNode(Node):
                     _, pr, pc, pow_st, pf = diff
                     if pf > self.pacman_last_seen:
                         self.known_pacman = (pr, pc)
+                        if pow_st and not self.pacman_powered:
+                            self.pacman_power_expiry_frame = self.frame + 210
                         self.pacman_powered = pow_st
                         if not pow_st:
-                            self.pacman_power_timer = 0
+                            self.pacman_power_expiry_frame = 0
                         self.pacman_last_seen = pf
                         self.last_lost_pacman = None
                         relay_diffs.append(diff)
@@ -548,6 +554,8 @@ class GhostNode(Node):
                 best_dir = (pr - self.row, pc - self.col)
                 self.cbba_agent.bundle.clear()
                 self.cbba_agent.path.clear()
+                if hasattr(self, '_committed_path'):
+                    self._committed_path = []
                 
                 nearby_ghosts = 1
                 for _gid, pos in self.known_agents.items():
@@ -569,6 +577,8 @@ class GhostNode(Node):
                             best_dir = (dr, dc)
                 if best_dir is not None:
                     self._tail_pacman_remaining -= 1
+                    if hasattr(self, '_committed_path'):
+                        self._committed_path = []
                 else:
                     self._tail_pacman_remaining = 0
             else:
@@ -585,6 +595,8 @@ class GhostNode(Node):
                     if self.grid[r][c] == POWER and d > 0:
                         if d == 1 or (d == 2 and (dist_to_pac > 6 or self.pacman_powered)):
                             best_dir = path[0]
+                            if hasattr(self, '_committed_path'):
+                                self._committed_path = []
                             break
                     if d < 2:
                         for dr, dc in [(-1,0), (1,0), (0,-1), (0,1)]:
@@ -592,11 +604,38 @@ class GhostNode(Node):
                             if 0 <= nr < self._rows and 0 <= nc < self._cols and self.grid[nr][nc] != WALL and (nr, nc) not in visited:
                                 visited.add((nr, nc))
                                 queue.append((nr, nc, d + 1, path + [(dr, dc)]))
-
+                
         if not best_dir and active_task:
-            path = pathfinder.astar(self.grid, (self.row, self.col), active_task.target_pos)
-            if path and len(path) > 1:
-                best_dir = (path[1][0] - self.row, path[1][1] - self.col)
+            target = active_task.target_pos
+            if getattr(self, '_committed_target', None) != target or not getattr(self, '_committed_path', []):
+                path = pathfinder.astar(self.grid, (self.row, self.col), target)
+                if path and len(path) >= 2:
+                    self._committed_path = path[1:]
+                    self._committed_target = target
+                else:
+                    self._committed_path = []
+            
+            nxt = None
+            while hasattr(self, '_committed_path') and self._committed_path:
+                cand = self._committed_path.pop(0)
+                if self.grid[cand[0], cand[1]] != WALL:
+                    nxt = cand
+                    break
+                else:
+                    path = pathfinder.astar(self.grid, (self.row, self.col), target)
+                    if path and len(path) >= 2:
+                        self._committed_path = path[1:]
+                        self._committed_target = target
+                        nxt = self._committed_path.pop(0)
+                    else:
+                        self._committed_path = []
+                    break
+            
+            if nxt is not None and nxt != (self.row, self.col) and self.grid[nxt[0], nxt[1]] != WALL:
+                if self.pacman_powered and self.known_pacman is not None and nxt == self.known_pacman:
+                    pass
+                else:
+                    best_dir = (nxt[0] - self.row, nxt[1] - self.col)
                 
         if not best_dir:
             valid = []
@@ -630,6 +669,8 @@ class GhostNode(Node):
             self.cbba_agent.bundle.clear()
             self.cbba_agent.path.clear()
             self.pos_history.clear()
+            if hasattr(self, '_committed_path'):
+                self._committed_path = []
 
     def _compute_cmd(self, tx: float, ty: float) -> Twist:
         cmd   = Twist()
@@ -692,12 +733,13 @@ class GhostNode(Node):
 
     def _control_loop(self):
         if not self._initialized: return
-        self.frame += 1
         
-        if self.pacman_power_timer > 0:
-            self.pacman_power_timer -= 1
-            if self.pacman_power_timer <= 0:
-                self.pacman_powered = False
+        # Kinetic/tick based absolute frame syncing to Gazebo clock
+        current_time_ns = self.get_clock().now().nanoseconds
+        self.frame = int(current_time_ns / (1e9 / 30.0))
+        
+        if self.pacman_powered and self.frame >= getattr(self, 'pacman_power_expiry_frame', 999999):
+            self.pacman_powered = False
 
         if self.frame % 3 == 0:
             self._check_liveness()
@@ -756,6 +798,10 @@ class GhostNode(Node):
                 tx, ty = cell_center_world(self._target_row, self._target_col)
 
         self._cmd_pub.publish(self._compute_cmd(tx, ty))
+
+    def kill(self):
+        self._dead = True
+        self._dead_expiry_frame = self.frame + 60
 
     def _stop(self):
         if rclpy.ok():
