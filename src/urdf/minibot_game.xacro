@@ -185,6 +185,118 @@
   <dynamics damping="0.001" friction="0.01"/>
 </joint>
 
+<!-- ── PAC-MAN SPECIFIC DESIGN ───────────────────────────────────── -->
+<xacro:if value="${robot_name == 'pacman_bot'}">
+  <!-- Black stripe 1 -->
+  <link name="pacman_stripe_1">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" iyz="0" ixz="0"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <cylinder radius="0.0455" length="0.006"/>
+      </geometry>
+      <material name="wheel_dark"/>
+    </visual>
+  </link>
+  <joint name="pacman_stripe_1_joint" type="fixed">
+    <origin xyz="0 0 0.015" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="pacman_stripe_1"/>
+  </joint>
+  <gazebo reference="pacman_stripe_1">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+  <!-- Black stripe 2 -->
+  <link name="pacman_stripe_2">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" iyz="0" ixz="0"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <cylinder radius="0.0455" length="0.006"/>
+      </geometry>
+      <material name="wheel_dark"/>
+    </visual>
+  </link>
+  <joint name="pacman_stripe_2_joint" type="fixed">
+    <origin xyz="0 0 0.035" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="pacman_stripe_2"/>
+  </joint>
+  <gazebo reference="pacman_stripe_2">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+  <!-- Eye Left -->
+  <link name="pacman_eye_left">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" iyz="0" ixz="0"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <sphere radius="0.008"/>
+      </geometry>
+      <material name="wheel_dark"/>
+    </visual>
+  </link>
+  <joint name="pacman_eye_left_joint" type="fixed">
+    <origin xyz="0.038 0.018 0.045" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="pacman_eye_left"/>
+  </joint>
+  <gazebo reference="pacman_eye_left">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+  <!-- Eye Right -->
+  <link name="pacman_eye_right">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" iyz="0" ixz="0"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <sphere radius="0.008"/>
+      </geometry>
+      <material name="wheel_dark"/>
+    </visual>
+  </link>
+  <joint name="pacman_eye_right_joint" type="fixed">
+    <origin xyz="0.038 -0.018 0.045" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="pacman_eye_right"/>
+  </joint>
+  <gazebo reference="pacman_eye_right">
+    <material>Gazebo/Black</material>
+  </gazebo>
+  <!-- Top Design Element (SkyBlue Dome) -->
+  <link name="pacman_top_dome">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" iyz="0" ixz="0"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <sphere radius="0.02"/>
+      </geometry>
+      <material name="wheel_dark"/>
+    </visual>
+  </link>
+  <joint name="pacman_top_dome_joint" type="fixed">
+    <origin xyz="0 0 0.06" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="pacman_top_dome"/>
+  </joint>
+  <gazebo reference="pacman_top_dome">
+    <material>Gazebo/SkyBlue</material>
+  </gazebo>
+</xacro:if>
+
 <!-- ── Gazebo properties ────────────────────────────────────────── -->
 <gazebo reference="base_link">
   <mu1>0.4</mu1>

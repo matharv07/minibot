@@ -544,18 +544,6 @@ class PacmanNode(Node):
             if self._grid[gr, gc] == POWER:
                 self._grid[gr, gc] = PELLET
                 self._power_neutralised += 1
-                
-                wx, wy, _ = grid_to_world(gr, gc)
-                if self._set_state.service_is_ready():
-                    req   = SetEntityState.Request()
-                    state = EntityState()
-                    state.name = f'pellet_field::power_{gr}_{gc}'
-                    state.pose.position.x = wx
-                    state.pose.position.y = wy
-                    state.pose.position.z = -2.0
-                    state.pose.orientation.w = 1.0
-                    req.state = state
-                    self._set_state.call_async(req)
                     
             same_cell = (self._row == gr and self._col == gc)
             

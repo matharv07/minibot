@@ -728,6 +728,22 @@ class GhostNode(Node):
         if self.pacman_powered and self.frame >= getattr(self, 'pacman_power_expiry_frame', 999999):
             self.pacman_powered = False
 
+        cx, cy = cell_center_world(self.row, self.col)
+        if math.hypot(self._x - cx, self._y - cy) < 0.075:
+            if self.grid[self.row, self.col] == POWER:
+                self.grid[self.row, self.col] = PELLET
+                if self._set_state.service_is_ready():
+                    from gazebo_msgs.msg import EntityState
+                    req = SetEntityState.Request()
+                    state = EntityState()
+                    state.name = f'pellet_field::power_{self.row}_{self.col}'
+                    state.pose.position.x = float(cx)
+                    state.pose.position.y = float(cy)
+                    state.pose.position.z = -2.0
+                    state.pose.orientation.w = 1.0
+                    req.state = state
+                    self._set_state.call_async(req)
+
         if self.frame % 3 == 0:
             self._check_liveness()
             diffs = self._update_personal_map()
@@ -749,10 +765,6 @@ class GhostNode(Node):
                 intersect_c = self._target_col
                 self.row = intersect_r
                 self.col = intersect_c
-                
-                if self.grid[self.row, self.col] == POWER:
-                    self.grid[self.row, self.col] = PELLET
-                
                 
                 dr, dc = self._choose_next_dir()
                 self._nav_dir = (dr, dc)
