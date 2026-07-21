@@ -74,12 +74,6 @@
     </geometry>
     <material name="wheel_dark"/>
   </visual>
-  <collision>
-    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
-    <geometry>
-      <cylinder radius="0.024" length="0.014"/>
-    </geometry>
-  </collision>
 </link>
 
 <link name="wheel_right_1">
@@ -96,12 +90,6 @@
     </geometry>
     <material name="wheel_dark"/>
   </visual>
-  <collision>
-    <origin xyz="0 0 0" rpy="0 1.5708 0"/>
-    <geometry>
-      <cylinder radius="0.024" length="0.014"/>
-    </geometry>
-  </collision>
 </link>
 
 <link name="wheel_back_1">
@@ -118,12 +106,6 @@
     </geometry>
     <material name="wheel_dark"/>
   </visual>
-  <collision>
-    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
-    <geometry>
-      <cylinder radius="0.024" length="0.014"/>
-    </geometry>
-  </collision>
 </link>
 
 <link name="wheel_left_1">
@@ -140,12 +122,6 @@
     </geometry>
     <material name="wheel_dark"/>
   </visual>
-  <collision>
-    <origin xyz="0 0 0" rpy="0 1.5708 0"/>
-    <geometry>
-      <cylinder radius="0.024" length="0.014"/>
-    </geometry>
-  </collision>
 </link>
 
 <!-- ── Wheel joints ─────────────────────────────────────────────── -->

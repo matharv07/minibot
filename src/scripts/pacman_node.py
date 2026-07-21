@@ -524,7 +524,8 @@ class PacmanNode(Node):
                 self._m_row = self._m_col = 0.0
                 self._v_row = self._v_col = 0.0
                 self._adam_t = 0
-                self._teleport_self(*grid_to_world(self._row, self._col), force_z=SPAWN_Z)
+                wx, wy, _ = grid_to_world(self._row, self._col)
+                self._teleport_self(wx, wy, force_z=SPAWN_Z)
             self._cmd_pub.publish(Twist())
             return
 
