@@ -26,7 +26,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from geometry_msgs.msg import Twist, Point
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Bool
-from gazebo_msgs.srv import SetEntityState
+from gazebo_msgs.srv import SetEntityState, DeleteEntity
 from gazebo_msgs.msg import EntityState
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -127,6 +127,7 @@ class PacmanNode(Node):
 
         # ── Physical state ────────────────────────────────────────────────────
         self._row, self._col = self._start
+        self._prev_row, self._prev_col = self._start
         self._x, self._y     = cell_center_world(self._row, self._col)
         self._z              = SPAWN_Z
         self._yaw            = 0.0
@@ -147,7 +148,9 @@ class PacmanNode(Node):
 
         # ── Ghost knowledge (must be before first _choose_next_target call) ───
         self._ghost_pos:       dict = {i: None for i in range(N_GHOSTS)}
+        self._ghost_prev_pos:  dict = {i: None for i in range(N_GHOSTS)}
         self._ghost_last_seen: dict = {}
+        self._dead_ghosts:     set  = set()
 
         # ── Adam navigator state (mirrors Player in pacman.py) ────────────────
         self._nav_dir    = (0, 1)   # initial heading: RIGHT
@@ -180,6 +183,7 @@ class PacmanNode(Node):
         self._loc_pub   = self.create_publisher(Point,  '/pacman_bot/location',    10)
         self._power_pub = self.create_publisher(Bool,   '/pacman_bot/power_state', 10)
         self._stats_pub = self.create_publisher(String, '/pacman_bot/stats',       10)
+        self._game_events_pub = self.create_publisher(String, '/game_events', 10)
 
         # ── Subscribers ──────────────────────────────────────────────────────
         self.create_subscription(Odometry, f'/{PACMAN_NAME}/odom',
@@ -189,6 +193,7 @@ class PacmanNode(Node):
 
         # ── Gazebo service ────────────────────────────────────────────────────
         self._set_state = self.create_client(SetEntityState, '/set_entity_state')
+        self._delete_entity = self.create_client(DeleteEntity, '/delete_entity')
 
         # ── 30 Hz control loop ────────────────────────────────────────────────
         self.create_timer(1.0 / 30.0, self._control_loop, callback_group=self._cbg)
@@ -201,7 +206,10 @@ class PacmanNode(Node):
         self._y = msg.pose.pose.position.y
         self._z = msg.pose.pose.position.z
         self._q = msg.pose.pose.orientation
-        self._row, self._col = world_to_grid(self._x, self._y)
+        r, c = world_to_grid(self._x, self._y)
+        self._prev_row = self._row
+        self._prev_col = self._col
+        self._row, self._col = r, c
         
         q = self._q
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -226,7 +234,8 @@ class PacmanNode(Node):
             dtype = diff[0]
             if dtype in ('heartbeat', 'agent'):
                 _, gid, r, c = diff[:4]
-                if 0 <= gid < N_GHOSTS:
+                if 0 <= gid < N_GHOSTS and gid not in self._dead_ghosts:
+                    self._ghost_prev_pos[gid]  = self._ghost_pos.get(gid)
                     self._ghost_pos[gid]       = (int(r), int(c))
                     self._ghost_last_seen[gid] = self._tick
 
@@ -548,7 +557,15 @@ class PacmanNode(Node):
                     req.state = state
                     self._set_state.call_async(req)
                     
-            if self._row == gr and self._col == gc:
+            same_cell = (self._row == gr and self._col == gc)
+            
+            prev_pos = self._ghost_prev_pos.get(gid)
+            swapped = False
+            if prev_pos is not None:
+                p_gr, p_gc = prev_pos
+                swapped = (self._row == p_gr and self._col == p_gc and self._prev_row == gr and self._prev_col == gc)
+
+            if same_cell or swapped:
                 if self._powered:
                     points = 200 * (2 ** self._ghosts_eaten_this_power)
                     self._score += points
@@ -557,14 +574,18 @@ class PacmanNode(Node):
                     self._ghosts_eaten_this_power += 1
                     self.get_logger().info(f'ATE GHOST {gid}! +{points} points. Score: {self._score}')
                     self._ghost_pos[gid] = None
-                    if self._set_state.service_is_ready():
-                        req = SetEntityState.Request()
-                        req.state.name = GHOST_NAMES[gid]
-                        sx, sy, _ = grid_to_world(self._start[0], self._start[1])
-                        req.state.pose.position.x = sx
-                        req.state.pose.position.y = sy
-                        req.state.pose.position.z = 5.0
-                        self._set_state.call_async(req)
+                    self._ghost_prev_pos[gid] = None
+                    self._dead_ghosts.add(gid)
+                    
+                    # Notify ghost node to shut down AI
+                    msg = String()
+                    msg.data = f"kill:{gid}"
+                    self._game_events_pub.publish(msg)
+                    
+                    if self._delete_entity.service_is_ready():
+                        req = DeleteEntity.Request()
+                        req.name = GHOST_NAMES[gid]
+                        self._delete_entity.call_async(req)
                 else:
                     if not self._dead:
                         self.get_logger().info(f'DIED to ghost {gid}!')
@@ -601,7 +622,7 @@ class PacmanNode(Node):
             err_c = (self._x - cx) if self._centering_axis == 'x' else (self._y - cy)
             if abs(err_c) < CELL_SNAP_DIST:
                 self._centering  = False
-                self._teleport_self(cx, cy)
+                # removed teleport snapping for fluid physical motion
                 self._target_row = self._pending_target[0]
                 self._target_col = self._pending_target[1]
                 self._arrived    = False

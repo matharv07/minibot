@@ -31,9 +31,10 @@ from allocator import generate_tasks, TaskType
 from net import GhostActor
 import pathfinder
 
-BOT_SPEED = 2.0
+BOT_SPEED = 1.0
 ARRIVE_DIST = 0.25
 CELL_SNAP_DIST = 0.03
+CROSS_KP = 6.0
 DECEL_MIN_SPD = 0.8
 AUCTION_EVERY = 6
 
@@ -122,6 +123,7 @@ class GhostNode(Node):
         self._centering_axis = 'x'
         self._pending_target = (0, 0)
         self._seen_ids = set()
+        self.dead = False
         
         from collections import deque
         self.pos_history = deque(maxlen=OSCILLATION_WINDOW)
@@ -140,6 +142,7 @@ class GhostNode(Node):
         self.create_subscription(LaserScan, f'/{name}/scan/back', lambda m, off=-math.pi/2: self._scan_cb(m, off), 10)
         self.create_subscription(LaserScan, f'/{name}/scan/left', lambda m, off=math.pi: self._scan_cb(m, off), 10)
         self.create_subscription(LaserScan, f'/{name}/scan/right', lambda m, off=0.0: self._scan_cb(m, off), 10)
+        self.create_subscription(String, '/game_events', self._game_events_cb, 10)
 
         # ── Timers ───────────────────────────────────────────────────────────
         self.create_timer(1.0 / 30.0, self._control_loop)
@@ -147,6 +150,11 @@ class GhostNode(Node):
         # Initialize target to current pose when odom starts arriving
         self._initialized = False
         self.get_logger().info(f'Ghost node "{name}" AI ready')
+
+    def _game_events_cb(self, msg: String):
+        if msg.data == f"kill:{self.gid}":
+            self.dead = True
+            self.get_logger().info(f'Received kill event for ghost {self.gid}. Shutting down AI.')
 
     def _odom_cb(self, msg: Odometry):
         self._x = msg.pose.pose.position.x
@@ -190,101 +198,71 @@ class GhostNode(Node):
     def _pac_pow_cb(self, msg: Bool):
         self._pacman_pow_topic = msg.data
 
+    @property
+    def pacman_power_timer(self):
+        if not getattr(self, 'pacman_powered', False):
+            return 0
+        rem_frames = self.pacman_power_expiry_frame - self.frame
+        return max(0, int((rem_frames / 210.0) * 40.0))
+
     def _scan_cb(self, msg, yaw_offset):
         angle = msg.angle_min
         for r in msg.ranges:
-            if math.isfinite(r) and msg.range_min <= r <= msg.range_max:
-                global_angle = angle + yaw_offset
-                idx = int(round(global_angle * 180.0 / math.pi)) % 360
-                self._lidar_ranges[idx] = r
+            val = r
+            if not math.isfinite(val) or val > msg.range_max:
+                val = 4.0
+            elif val < msg.range_min:
+                val = msg.range_min
+            
+            global_angle = angle + yaw_offset
+            idx = int(round(global_angle * 180.0 / math.pi)) % 360
+            self._lidar_ranges[idx] = val
             angle += msg.angle_increment
 
     def _update_personal_map(self):
         visible = {}
         visible[(self.row, self.col)] = self.grid[self.row, self.col]
         
-        hit_points = []
+        pacman_spotted = False
+        
         for i in range(360):
             r = self._lidar_ranges[i]
             if r > 4.0 or not math.isfinite(r):
                 r = 4.0
-            angle = math.radians(i) + self._yaw
-            hx = self._x + r * math.cos(angle)
-            hy = self._y + r * math.sin(angle)
-            hit_points.append((hx, hy, r, i))
-            
-        clusters = []
-        current_cluster = []
-        for i in range(360):
-            p1 = hit_points[i]
-            p2 = hit_points[(i + 1) % 360]
-            dist = math.hypot(p1[0] - p2[0], p1[1] - p2[1])
-            if dist < 0.2:
-                current_cluster.append(p1)
-            else:
-                if current_cluster:
-                    current_cluster.append(p1)
-                    clusters.append(current_cluster)
-                    current_cluster = []
-        if current_cluster:
-            clusters.append(current_cluster)
-            if len(clusters) > 1:
-                p_first = clusters[0][0]
-                p_last = clusters[-1][-1]
-                if math.hypot(p_first[0] - p_last[0], p_first[1] - p_last[1]) < 0.2:
-                    clusters[0] = clusters[-1] + clusters[0]
-                    clusters.pop()
-            
-        pacman_spotted = False
-        
-        for cluster in clusters:
-            if len(cluster) < 2: continue
-            p_start = cluster[0]
-            p_end = cluster[-1]
-            width = math.hypot(p_start[0] - p_end[0], p_start[1] - p_end[1])
-            avg_dist = sum(p[2] for p in cluster) / len(cluster)
-            
-            if 0.04 < width < 0.35 and avg_dist < 4.0:
-                cx = sum(p[0] for p in cluster) / len(cluster)
-                cy = sum(p[1] for p in cluster) / len(cluster)
-                from maze_generator import world_to_grid, cell_center_world
-                cr, cc = world_to_grid(cx, cy)
                 
-                is_ghost = False
-                for gid, pos in self.known_agents.items():
-                    if pos != "UNKNOWN":
-                        gx, gy = cell_center_world(pos[0], pos[1])
-                        if math.hypot(cx - gx, cy - gy) < 0.4:
-                            is_ghost = True
-                            break
-                            
-                for p in cluster:
-                    idx = p[3]
-                    self._lidar_ranges[idx] = 4.0
-                
-                if not is_ghost:
-                    if self._pacman_pos_topic:
-                        pr, pc = self._pacman_pos_topic
-                        if abs(cr - pr) + abs(cc - pc) <= 2:
-                            pacman_spotted = True
-                    else:
-                        pacman_spotted = True
-                        
-        for i in range(360):
-            r = self._lidar_ranges[i]
-            self._lidar_ranges[i] = min(4.0, self._lidar_ranges[i] + 0.5)
-            
             angle = math.radians(i) + self._yaw
             from maze_generator import world_to_grid, CELL_SIZE
-            steps = max(1, int(r / (CELL_SIZE / 4.0)))
+            
+            # Robust physical dynamic object detection
+            if r < 4.0:
+                hx = self._x + r * math.cos(angle)
+                hy = self._y + r * math.sin(angle)
+                hr, hc = world_to_grid(hx, hy)
+                if 0 <= hr < self._rows and 0 <= hc < self._cols:
+                    if self.grid[hr, hc] != WALL:
+                        if self._pacman_pos_topic:
+                            pr, pc = self._pacman_pos_topic
+                            if abs(hr - pr) + abs(hc - pc) <= 1:
+                                pacman_spotted = True
+
+            # Map Discovery (Arcade Parity)
+            # We explicitly ignore physical 'r' here to eliminate ghost points/shadows.
+            # We always raycast up to MAX_RAY_DIST (4.0m) or until we hit a WALL,
+            # ensuring ghosts are "transparent" to map mapping, exactly like pacmanbot.
+            ray_dist = 4.0
+            steps = max(1, int(ray_dist / (CELL_SIZE / 4.0)))
+            
             for step in range(1, steps + 1):
-                px = self._x + (r * step / steps) * math.cos(angle)
-                py = self._y + (r * step / steps) * math.sin(angle)
+                px = self._x + (ray_dist * step / steps) * math.cos(angle)
+                py = self._y + (ray_dist * step / steps) * math.sin(angle)
                 pr, pc = world_to_grid(px, py)
                 if 0 <= pr < self._rows and 0 <= pc < self._cols:
                     visible[(pr, pc)] = self.grid[pr, pc]
                     if self.grid[pr, pc] == WALL:
                         break
+                        
+        if self._pacman_pos_topic and self._pacman_pos_topic in visible:
+            pacman_spotted = True
                     
         diffs = []
         for (r, c), val in visible.items():
@@ -298,16 +276,20 @@ class GhostNode(Node):
         pacman_diff = None
         if pacman_spotted and self._pacman_pos_topic:
             pow_st = getattr(self, '_pacman_pow_topic', False)
-            self.known_pacman = self._pacman_pos_topic
-            if pow_st and not self.pacman_powered:
-                self.pacman_power_expiry_frame = self.frame + 210
-            self.pacman_powered = pow_st
-            if not pow_st:
-                self.pacman_power_expiry_frame = 0
-            self.pacman_last_seen = self.frame
-            pacman_diff = ("pacman", int(self.known_pacman[0]), int(self.known_pacman[1]), bool(self.pacman_powered), int(self.frame))
+            if self.known_pacman != self._pacman_pos_topic or self.pacman_powered != pow_st:
+                self.known_pacman = self._pacman_pos_topic
+                if pow_st and not self.pacman_powered:
+                    self.pacman_power_expiry_frame = self.frame + 210
+                self.pacman_powered = pow_st
+                if not pow_st:
+                    self.pacman_power_expiry_frame = 0
+                self.pacman_last_seen = self.frame
+                pacman_diff = ("pacman", int(self.known_pacman[0]), int(self.known_pacman[1]), bool(self.pacman_powered), int(self.frame))
+            else:
+                self.pacman_last_seen = self.frame
         elif self.known_pacman and self.known_pacman in visible:
             self.last_lost_pacman = self.known_pacman
+            self.pacman_last_seen = self.frame
             pacman_diff = ("pacman_lost", int(self.known_pacman[0]), int(self.known_pacman[1]), int(self.frame))
             self.known_pacman = None
             
@@ -376,15 +358,15 @@ class GhostNode(Node):
             mid = pkt.get('id')
             if not mid: continue
             
+            if mid[0] == "sync" and mid[2] != self.gid:
+                continue
+
             sender = mid[1] if mid[0] == "sync" else mid[0]
             if sender != self.gid:
                 last_sync = self.last_sync_frame.get(sender, -1)
                 if self.frame - last_sync >= RESYNC_EVERY:
                     self.last_sync_frame[sender] = self.frame
                     self._send_full_sync(sender)
-                    
-            if mid[0] == "sync" and mid[2] != self.gid:
-                continue
 
             hop = pkt.get('hop', 0)
             relay_diffs = []
@@ -398,7 +380,8 @@ class GhostNode(Node):
                         if old != UNKNOWN and self.last_seen[r, c] >= self.frame - MEMORY_FRAMES:
                             continue
                         self.personal_map[r, c] = val
-                        self.last_seen[r, c] = self.frame
+                        if val == PELLET and self.grid[r, c] == POWER:
+                            self.grid[r, c] = PELLET
                         if val == WALL:
                             self.belief_map.update_local_map_cell((r, c), WALL)
                         relay_diffs.append(diff)
@@ -467,7 +450,7 @@ class GhostNode(Node):
                     self.belief_map.merge(gid, payload, self.frame)
                     relay_diffs.append(diff)
                     
-            if relay_diffs and mid[0] != "sync":
+            if relay_diffs:
                 MAX_RELAY_SIZE = 50
                 for idx, i in enumerate(range(0, len(relay_diffs), MAX_RELAY_SIZE)):
                     chunk = relay_diffs[i: i + MAX_RELAY_SIZE]
@@ -692,20 +675,20 @@ class GhostNode(Node):
             if self._centering_axis == 'x':
                 vx_raw = err_x * p_gain
                 vx = math.copysign(max(DECEL_MIN_SPD, min(BOT_SPEED, abs(vx_raw))), vx_raw)
-                vy = 0.0
+                vy = err_y * CROSS_KP
             else:
                 vy_raw = err_y * p_gain
-                vx = 0.0
+                vx = err_x * CROSS_KP
                 vy = math.copysign(max(DECEL_MIN_SPD, min(BOT_SPEED, abs(vy_raw))), vy_raw)
         else:
             speed = BOT_SPEED
             
             if dc != 0:
                 vx = math.copysign(speed, err_x)
-                vy = 0.0
+                vy = err_y * CROSS_KP
             elif dr != 0:
                 vy = math.copysign(speed, err_y)
-                vx = 0.0
+                vx = err_x * CROSS_KP
 
         cos_y = math.cos(self._yaw)
         sin_y = math.sin(self._yaw)
@@ -733,6 +716,10 @@ class GhostNode(Node):
 
     def _control_loop(self):
         if not self._initialized: return
+        
+        if getattr(self, 'dead', False):
+            self._cmd_pub.publish(Twist())
+            return
         
         # Kinetic/tick based absolute frame syncing to Gazebo clock
         current_time_ns = self.get_clock().now().nanoseconds
@@ -791,7 +778,7 @@ class GhostNode(Node):
             err_c = (self._x - cx) if self._centering_axis == 'x' else (self._y - cy)
             if abs(err_c) < CELL_SNAP_DIST:
                 self._centering  = False
-                self._teleport_self(cx, cy)
+                # removed teleport snapping for fluid physical motion
                 self._target_row = self._pending_target[0]
                 self._target_col = self._pending_target[1]
                 self._arrived    = False

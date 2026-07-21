@@ -130,7 +130,7 @@ class NRF24Bridge(Node):
                 sent += 1
                 continue
             dist = math.hypot(src_pos[0] - dst_pos[0], src_pos[1] - dst_pos[1])
-            if dist <= self._radius:
+            if dist <= self._radius or name == PACMAN_NAME or sender == PACMAN_NAME:
                 self._rx_pubs[name].publish(String(data=raw))
                 sent += 1
 

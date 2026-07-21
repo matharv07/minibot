@@ -35,9 +35,9 @@ BOT_RADIUS   = 0.045      # m  (cylinder collision radius from minibot_game.xacr
 BOT_HEIGHT   = 0.07       # m  (approx. chassis height)
 SPAWN_Z      = 0.035      # m  (nominal spawn height from launch file)
 
-# Float pellets higher above the bots (realistic floating candy look)
-PELLET_Z     = SPAWN_Z + 0.075   # ~11 cm — above bot chassis top
-POWER_Z      = SPAWN_Z + 0.085   # slightly higher than regular pellets
+# Float pellets higher above the bots (elevated to not interfere with sonar/bots)
+PELLET_Z     = SPAWN_Z + 0.100   # elevated to avoid sonar/bots
+POWER_Z      = SPAWN_Z + 0.110   # slightly higher than regular pellets
 
 # ── NRF24L01 communication radius ────────────────────────────────────────────
 NRF_RADIUS_CELLS  = 12               # from ghost.py RADIUS constant
