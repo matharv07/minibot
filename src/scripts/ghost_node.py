@@ -52,10 +52,26 @@ _DY = np.sin(_ANGLES) * 0.5
 
 RL_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 import glob
+
 ckpts = glob.glob(os.path.join(_PACMANBOT_DIR, "checkpoints/ckpt_*.pt"))
-latest = max(ckpts, key=lambda p: int(os.path.basename(p).split('_')[1].split('.')[0]))
+ckpt_nums = [int(os.path.basename(p).split('_')[1].split('.')[0]) for p in ckpts]
+valid_hundreds = [n for n in ckpt_nums if n % 100 == 0]
+default_ckpt = max(valid_hundreds) if valid_hundreds else max(ckpt_nums)
+
+target_ckpt = default_ckpt
+for i, arg in enumerate(sys.argv):
+    if arg == '--check' and i + 1 < len(sys.argv):
+        try:
+            val = int(sys.argv[i+1])
+            if val != -1:
+                target_ckpt = val
+        except ValueError:
+            pass
+
+target_path = os.path.join(_PACMANBOT_DIR, f"checkpoints/ckpt_{target_ckpt}.pt")
+
 RL_ACTOR = GhostActor().to(RL_DEVICE)
-checkpoint = torch.load(latest, map_location=RL_DEVICE, weights_only=False)
+checkpoint = torch.load(target_path, map_location=RL_DEVICE, weights_only=False)
 RL_ACTOR.load_state_dict(checkpoint["actor"])
 RL_ACTOR.eval()
 
@@ -102,7 +118,7 @@ class GhostNode(Node):
         self._lidar_ranges = [4.0] * 360
         
         self.cbba_agent = CBBA_Agent(self.gid)
-        self.belief_map = BeliefMap(self.gid, self.grid.copy(), pacman_start=self.pacman_start)
+        self.belief_map = BeliefMap(self.gid, self.personal_map, pacman_start=self.pacman_start)
         self.recent_nom = np.zeros((self._rows, self._cols), dtype=np.float32)
         
         self.message_queue = []
@@ -156,6 +172,11 @@ class GhostNode(Node):
         if msg.data == f"kill:{self.gid}":
             self.dead = True
             self.get_logger().info(f'Received kill event for ghost {self.gid}. Shutting down AI.')
+        elif msg.data == "pacman_died":
+            self.get_logger().info(f'Pacman died. Ghost {self.gid} stopping.')
+            self._cmd_pub.publish(Twist())
+            import sys
+            sys.exit(0)
 
     def _odom_cb(self, msg: Odometry):
         self._x = msg.pose.pose.position.x
@@ -393,20 +414,20 @@ class GhostNode(Node):
                         relay_diffs.append(diff)
                 elif dtype == "agent":
                     _, gid, r, c = diff
-                    if gid == self.gid: continue
+                    if gid == self.gid or gid < 0: continue
                     old = self.known_agents.get(gid)
                     if old != (r, c):
                         self.known_agents[gid] = (r, c)
                         relay_diffs.append(diff)
                 elif dtype == "agent_lost":
                     _, gid = diff
-                    if gid == self.gid: continue
+                    if gid == self.gid or gid < 0: continue
                     if self.known_agents.get(gid) != "UNKNOWN":
                         self.known_agents[gid] = "UNKNOWN"
                         relay_diffs.append(diff)
                 elif dtype == "heartbeat":
                     _, gid, r, c, origin_frame = diff
-                    if gid == self.gid: continue
+                    if gid == self.gid or gid < 0: continue
                     existing = self.last_heartbeat.get(gid, -1)
                     if origin_frame > existing:
                         self.last_heartbeat[gid] = origin_frame
@@ -418,7 +439,7 @@ class GhostNode(Node):
                     relay_diffs.append(diff)
                 elif dtype == "hb_sync":
                     _, gid, frames_ago = diff
-                    if gid == self.gid: continue
+                    if gid == self.gid or gid < 0: continue
                     reconstructed = self.frame - frames_ago
                     existing = self.last_heartbeat.get(gid, -1)
                     if reconstructed > existing:

@@ -255,6 +255,10 @@ class PacmanNode(Node):
             return
         self._consumed.add((row, col))
         self._grid[row, col] = EMPTY
+        
+        msg = String()
+        msg.data = f"eat:{row}:{col}"
+        self._game_events_pub.publish(msg)
 
         if cell == PELLET:
             self._score        += 10
@@ -519,32 +523,13 @@ class PacmanNode(Node):
         if self._dead:
             self._dead_timer -= 1
             if self._dead_timer <= 0:
-                self.get_logger().info('GAME OVER - Restarting simulation...')
+                self.get_logger().info('GAME OVER - Closing everything...')
                 self._cmd_pub.publish(Twist())
                 
-                import subprocess
                 import os
                 import signal
-                
-                # We wait for the parent launch process to die rather than using pgrep -f, 
-                # which was accidentally matching this background bash script itself!
-                parent_pid = os.getppid()
-                script = (
-                    "source /opt/ros/humble/setup.bash && "
-                    "source /home/atharv/xTerra/minibot/install/setup.bash && "
-                    f"while kill -0 {parent_pid} 2>/dev/null; do sleep 0.5; done; "
-                    "killall -9 gzserver gzclient 2>/dev/null; "
-                    "ros2 launch minibot pacman.launch.py"
-                )
-                
-                try:
-                    tty_fd = os.open('/dev/tty', os.O_RDWR)
-                    subprocess.Popen(["bash", "-c", script], start_new_session=True, stdin=tty_fd, stdout=tty_fd, stderr=tty_fd)
-                    os.close(tty_fd)
-                except Exception:
-                    subprocess.Popen(["bash", "-c", script], start_new_session=True)
-                
-                os.kill(0, signal.SIGINT)
+                # Cleanly shutdown the ros2 launch process
+                os.kill(os.getppid(), signal.SIGINT)
                 
             self._cmd_pub.publish(Twist())
             return
@@ -586,7 +571,6 @@ class PacmanNode(Node):
                     self._ghost_prev_pos[gid] = None
                     self._dead_ghosts.add(gid)
                     
-                    # Notify ghost node to shut down AI
                     msg = String()
                     msg.data = f"kill:{gid}"
                     self._game_events_pub.publish(msg)
@@ -599,7 +583,12 @@ class PacmanNode(Node):
                     if not self._dead:
                         self.get_logger().info(f'DIED to ghost {gid}!')
                         self._dead = True
-                        self._dead_timer = 60
+                        self._dead_timer = 300  # 10 seconds at 30Hz
+                        
+                        # Stop all ghosts
+                        msg = String()
+                        msg.data = "pacman_died"
+                        self._game_events_pub.publish(msg)
 
         # Arrival → choose next target (one-shot: fires once per cell)
         tx, ty = cell_center_world(self._target_row, self._target_col)

@@ -360,7 +360,7 @@ class ArenaSpawner(Node):
         return entities
 
     # ── Chunked async spawner ─────────────────────────────────────────────────
-    #
+    #login/?reason=lor2&dest=https%3A%2F%2Fold.reddit.com%2Fr%2FSheFucksHim%2F
     # Gazebo Classic's SpawnEntity service is single-threaded internally.
     # Firing 500+ futures in one go without spinning overflows the DDS service
     # queue and silently drops most requests — that's why walls disappeared.

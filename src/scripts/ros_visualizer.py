@@ -89,6 +89,12 @@ class VisualizerNode(Node):
             if msg.data.startswith('kill:'):
                 gid = int(msg.data.split(':')[1])
                 self.game.ghost_positions[gid] = None
+                self.game.dead_ghosts.add(gid)
+            elif msg.data.startswith('eat:'):
+                parts = msg.data.split(':')
+                r, c = int(parts[1]), int(parts[2])
+                if 0 <= r < ROWS and 0 <= c < COLS:
+                    self.game.grid[r][c] = EMPTY
         except Exception:
             pass
 
@@ -104,6 +110,7 @@ class VisualizerNode(Node):
         self.game.pacman_yaw = yaw
 
     def ghost_odom_cb(self, msg, gid):
+        if gid in self.game.dead_ghosts: return
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         self.game.ghost_positions[gid] = (x, y)
@@ -173,6 +180,7 @@ class Game:
         self.pacman_yaw = 0.0
         self.ghost_positions = {i: None for i in range(N_GHOSTS)}
         self.ghost_states = {i: GhostState() for i in range(N_GHOSTS)}
+        self.dead_ghosts = set()
         self.mouth_tick = 0
         self.mouth_open = True
         self.debug_ghost_id = 0
@@ -191,6 +199,7 @@ class Game:
         
         self.grid, self.player_start = generate_map(seed=seed_val)
         self.ghost_starts = compute_ghost_starts(self.grid, self.player_start, N_GHOSTS)
+        self.dead_ghosts.clear()
 
     def _world_to_screen(self, wx, wy):
         col = wx / CELL_SIZE + COLS / 2.0 - 0.5

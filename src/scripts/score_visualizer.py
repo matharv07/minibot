@@ -8,7 +8,7 @@ and renders a rich, colour-coded dashboard in the terminal using ANSI escape cod
 Layout
 ──────
   ┌──────────────────────────────────────────────────────┐
-  │               🕹  PAC-MAN  LIVE  STATS               │
+  │               🕹  GAME  LIVE  STATS                  │
   ├────────────────────┬─────────────────────────────────┤
   │  SCORE             │  POWER STATE                    │
   │  CELL              │  PELLETS LEFT                   │
@@ -30,6 +30,11 @@ import shutil
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+from maze_generator import N_GHOSTS
 
 # ── ANSI colour helpers ───────────────────────────────────────────────────────
 RESET  = '\033[0m'
@@ -203,10 +208,10 @@ class ScoreVisualizer(Node):
                                f'{pellets_left:>4} / {total:<4} {bar}',
                                FG_YELLOW))
 
-        lines.append(row_line('PELLETS EATEN',  f'{pellets_eat:>4}', FG_WHITE))
-        lines.append(row_line('POWER EATEN',    f'{power_eat:>4}', FG_MAGENTA))
-        lines.append(row_line('POWER NEUTRAL.', f'{power_neut:>4}', FG_YELLOW))
-        lines.append(row_line('GHOSTS EATEN',   f'{ghosts_eat:>4}', FG_RED))
+        lines.append(row_line('PELLETS EATEN',  f'{pellets_eat:>4} / {max(0, total-4):<4}', FG_WHITE))
+        lines.append(row_line('POWER EATEN',    f'{power_eat:>4} / 4   ', FG_MAGENTA))
+        lines.append(row_line('POWER NEUTRAL.', f'{power_neut:>4} / 4   ', FG_YELLOW))
+        lines.append(row_line('GHOSTS EATEN',   f'{ghosts_eat:>4} / {N_GHOSTS:<4}', FG_RED))
 
         lines.append(row_line('BOT SPEED',
                                f'{speed:.3f} m/s', FG_GREEN))

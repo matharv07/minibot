@@ -122,6 +122,10 @@ def generate_launch_description():
     paused_arg = DeclareLaunchArgument(
         'paused', default_value='false',
         description='Start Gazebo paused')
+        
+    check_arg = DeclareLaunchArgument(
+        'check', default_value='-1',
+        description='Checkpoint number to use (defaults to highest hundred)')
 
     # ── Gazebo (via official gazebo_ros launch) ────────────────────────────
     # Setting GAZEBO_MODEL_PATH in environ so the included launch file picks it up
@@ -130,15 +134,23 @@ def generate_launch_description():
     gazebo_ros_dir = get_package_share_directory('gazebo_ros')
     world = os.path.join(pkg, 'worlds', 'pacman_empty.world')
 
-    gazebo = IncludeLaunchDescription(
+    gzserver = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(gazebo_ros_dir, 'launch', 'gazebo.launch.py')
+            os.path.join(gazebo_ros_dir, 'launch', 'gzserver.launch.py')
         ),
         launch_arguments={
             'world': world,
             'pause': LaunchConfiguration('paused'),
         }.items()
     )
+
+    gzclient = TimerAction(period=3.0, actions=[
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(gazebo_ros_dir, 'launch', 'gzclient.launch.py')
+            )
+        )
+    ])
 
     # ── robot_state_publisher ──────────────────────────────────────────────
     rsp = TimerAction(period=4.0, actions=[
@@ -189,6 +201,7 @@ def generate_launch_description():
                     cmd=[
                         'python3',
                         os.path.join(_SCRIPTS_DIR, 'ghost_node.py'),
+                        '--check', LaunchConfiguration('check'),
                         '--ros-args',
                         '-p', f'ghost_id:={i}',
                         '-p', f'ghost_name:={gname}',
@@ -242,7 +255,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         paused_arg,
-        gazebo,
+        check_arg,
+        gzserver,
+        gzclient,
         rsp,
         spawn_arena,
         nrf24_bridge,
