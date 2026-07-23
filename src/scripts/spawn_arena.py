@@ -368,7 +368,7 @@ class ArenaSpawner(Node):
     # Fix: send CHUNK_SIZE requests, spin until that chunk fully resolves,
     # then send the next chunk.  Fast (parallel within each chunk) and safe.
 
-    CHUNK_SIZE = 20   # simultaneous requests per batch (fewer total entities now)
+    CHUNK_SIZE = 5    # simultaneous requests per batch (reduced to prevent dropping)
 
     def _batch_spawn(self, entities, timeout_per_entity: float = 8.0):
         total   = len(entities)

@@ -234,10 +234,16 @@ class PacmanNode(Node):
             dtype = diff[0]
             if dtype in ('heartbeat', 'agent'):
                 _, gid, r, c = diff[:4]
-                if 0 <= gid < N_GHOSTS and gid not in self._dead_ghosts:
+                if 0 <= gid < N_GHOSTS:
                     self._ghost_prev_pos[gid]  = self._ghost_pos.get(gid)
                     self._ghost_pos[gid]       = (int(r), int(c))
                     self._ghost_last_seen[gid] = self._tick
+            elif dtype == 'agent_lost':
+                _, gid = diff[:2]
+                if 0 <= gid < N_GHOSTS:
+                    self._dead_ghosts.add(gid)
+                    self._ghost_pos[gid] = None
+                    self._ghost_prev_pos[gid] = None
 
     # ── Pellet consumption ────────────────────────────────────────────────────
 
@@ -513,19 +519,33 @@ class PacmanNode(Node):
         if self._dead:
             self._dead_timer -= 1
             if self._dead_timer <= 0:
-                self._dead = False
-                self._row, self._col = self._start
-                self._target_row, self._target_col = self._start
-                self._arrived   = False
-                self._centering = False
-                self._centering_axis = 'x'
-                self._powered   = False
-                self._power_timer = 0
-                self._m_row = self._m_col = 0.0
-                self._v_row = self._v_col = 0.0
-                self._adam_t = 0
-                wx, wy, _ = grid_to_world(self._row, self._col)
-                self._teleport_self(wx, wy, force_z=SPAWN_Z)
+                self.get_logger().info('GAME OVER - Restarting simulation...')
+                self._cmd_pub.publish(Twist())
+                
+                import subprocess
+                import os
+                import signal
+                
+                # We wait for the parent launch process to die rather than using pgrep -f, 
+                # which was accidentally matching this background bash script itself!
+                parent_pid = os.getppid()
+                script = (
+                    "source /opt/ros/humble/setup.bash && "
+                    "source /home/atharv/xTerra/minibot/install/setup.bash && "
+                    f"while kill -0 {parent_pid} 2>/dev/null; do sleep 0.5; done; "
+                    "killall -9 gzserver gzclient 2>/dev/null; "
+                    "ros2 launch minibot pacman.launch.py"
+                )
+                
+                try:
+                    tty_fd = os.open('/dev/tty', os.O_RDWR)
+                    subprocess.Popen(["bash", "-c", script], start_new_session=True, stdin=tty_fd, stdout=tty_fd, stderr=tty_fd)
+                    os.close(tty_fd)
+                except Exception:
+                    subprocess.Popen(["bash", "-c", script], start_new_session=True)
+                
+                os.kill(0, signal.SIGINT)
+                
             self._cmd_pub.publish(Twist())
             return
 
@@ -738,13 +758,19 @@ def main(args=None):
     node = PacmanNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         if rclpy.ok():
-            node._cmd_pub.publish(Twist())
+            try:
+                node._cmd_pub.publish(Twist())
+            except Exception:
+                pass
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

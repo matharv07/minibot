@@ -81,7 +81,7 @@ class GhostNode(Node):
         seed_val = int(os.environ.get('PACMAN_SEED', 42))
         random.seed(seed_val)
         np.random.seed(seed_val)
-        self.grid, _ = generate_map()
+        self.grid, self.pacman_start = generate_map()
         self._rows = len(self.grid)
         self._cols = len(self.grid[0])
         
@@ -102,7 +102,7 @@ class GhostNode(Node):
         self._lidar_ranges = [4.0] * 360
         
         self.cbba_agent = CBBA_Agent(self.gid)
-        self.belief_map = BeliefMap(self.gid, self.grid.copy())
+        self.belief_map = BeliefMap(self.gid, self.grid.copy(), pacman_start=self.pacman_start)
         self.recent_nom = np.zeros((self._rows, self._cols), dtype=np.float32)
         
         self.message_queue = []
@@ -174,6 +174,10 @@ class GhostNode(Node):
             self.col = c
             self._target_row = r
             self._target_col = c
+            self.spawn_x = self._x
+            self.spawn_y = self._y
+            self.spawn_row = r
+            self.spawn_col = c
             self._initialized = True
 
     def _nrf_rx_cb(self, msg: String):
@@ -277,10 +281,11 @@ class GhostNode(Node):
         pacman_diff = None
         if pacman_spotted and self._pacman_pos_topic:
             pow_st = getattr(self, '_pacman_pow_topic', False)
+            if pow_st:
+                self.pacman_power_expiry_frame = self.frame + 210
+            
             if self.known_pacman != self._pacman_pos_topic or self.pacman_powered != pow_st:
                 self.known_pacman = self._pacman_pos_topic
-                if pow_st and not self.pacman_powered:
-                    self.pacman_power_expiry_frame = self.frame + 210
                 self.pacman_powered = pow_st
                 if not pow_st:
                     self.pacman_power_expiry_frame = 0
@@ -423,13 +428,20 @@ class GhostNode(Node):
                     _, pr, pc, pow_st, pf = diff
                     if pf > self.pacman_last_seen:
                         self.known_pacman = (pr, pc)
-                        if pow_st and not self.pacman_powered:
-                            self.pacman_power_expiry_frame = self.frame + 210
-                        self.pacman_powered = pow_st
-                        if not pow_st:
-                            self.pacman_power_expiry_frame = 0
                         self.pacman_last_seen = pf
                         self.last_lost_pacman = None
+                        if pow_st:
+                            expiry = pf + 210
+                            if expiry > self.frame:
+                                self.pacman_power_expiry_frame = expiry
+                                self.pacman_powered = True
+                            else:
+                                self.pacman_power_expiry_frame = 0
+                                self.pacman_powered = False
+                                diff = ("pacman", pr, pc, False, pf)
+                        else:
+                            self.pacman_power_expiry_frame = 0
+                            self.pacman_powered = False
                         relay_diffs.append(diff)
                 elif dtype == "pacman_lost":
                     _, pr, pc, pf = diff
@@ -657,6 +669,8 @@ class GhostNode(Node):
                 self.last_lost_pacman = None
                 self.pos_history.clear()
         if self.pos_history.count(cur) >= 3:
+            self.cbba_agent.y.clear()
+            self.cbba_agent.z.clear()
             self.cbba_agent.bundle.clear()
             self.cbba_agent.path.clear()
             self.pos_history.clear()
@@ -696,8 +710,12 @@ class GhostNode(Node):
                 elif i_am_leaver:
                     pass_score += 1
                 else:
-                    if self.gid > other_gid: yield_score += 1
-                    else: pass_score += 1
+                    if (self.gid + other_gid) % 2 == 0:
+                        if self.gid > other_gid: yield_score += 1
+                        else: pass_score += 1
+                    else:
+                        if self.gid < other_gid: yield_score += 1
+                        else: pass_score += 1
                     
         if slide_right:
             slide_amount = 0.08
@@ -705,11 +723,11 @@ class GhostNode(Node):
             slide_y = -dc * slide_amount
             
             if yield_score > pass_score:
-                speed_mod = 0.6
+                speed_mod = 0.8   # less severe penalty so higher GIDs don't get stuck
             elif pass_score > yield_score:
-                speed_mod = 1.4
+                speed_mod = 1.2   # less extreme speedup
             else:
-                speed_mod = 0.8
+                speed_mod = 1.0   # neutral
             
         tx += slide_x
         ty += slide_y
@@ -877,12 +895,18 @@ def main(args=None):
     ghost = GhostNode(gname, gid)
     try:
         rclpy.spin(ghost)
-    except KeyboardInterrupt:
-        ghost._stop()
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        try:
+            ghost._stop()
+        except Exception:
+            pass
     finally:
         ghost.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()

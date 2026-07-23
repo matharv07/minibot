@@ -200,14 +200,12 @@ def generate_launch_description():
         ))
 
     # ── Pygame Visualizer ──────────────────────────────────────────────────
-    pacmanbot_dir = os.path.join(pkg, 'pacmanbot')
     visualizer = TimerAction(period=25.0, actions=[
         ExecuteProcess(
             cmd=[
                 'python3',
-                os.path.join(pacmanbot_dir, 'pacman.py')
+                os.path.join(_SCRIPTS_DIR, 'ros_visualizer.py')
             ],
-            cwd=pacmanbot_dir,
             output='screen',
             additional_env=child_env,
         )
