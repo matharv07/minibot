@@ -177,6 +177,17 @@ class GhostNode(Node):
             self._cmd_pub.publish(Twist())
             import sys
             sys.exit(0)
+        elif msg.data.startswith('eat:'):
+            parts = msg.data.split(':')
+            r, c = int(parts[1]), int(parts[2])
+            if 0 <= r < self._rows and 0 <= c < self._cols:
+                self.grid[r, c] = EMPTY
+        elif msg.data.startswith('neutralise:'):
+            parts = msg.data.split(':')
+            r, c = int(parts[1]), int(parts[2])
+            if 0 <= r < self._rows and 0 <= c < self._cols:
+                if self.grid[r, c] == POWER:
+                    self.grid[r, c] = PELLET
 
     def _odom_cb(self, msg: Odometry):
         self._x = msg.pose.pose.position.x

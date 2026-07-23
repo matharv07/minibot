@@ -95,6 +95,12 @@ class VisualizerNode(Node):
                 r, c = int(parts[1]), int(parts[2])
                 if 0 <= r < ROWS and 0 <= c < COLS:
                     self.game.grid[r][c] = EMPTY
+            elif msg.data.startswith('neutralise:'):
+                parts = msg.data.split(':')
+                r, c = int(parts[1]), int(parts[2])
+                if 0 <= r < ROWS and 0 <= c < COLS:
+                    if self.game.grid[r][c] == POWER:
+                        self.game.grid[r][c] = PELLET
         except Exception:
             pass
 

@@ -207,9 +207,10 @@ class PacmanNode(Node):
         self._z = msg.pose.pose.position.z
         self._q = msg.pose.pose.orientation
         r, c = world_to_grid(self._x, self._y)
-        self._prev_row = self._row
-        self._prev_col = self._col
-        self._row, self._col = r, c
+        if r != self._row or c != self._col:
+            self._prev_row = self._row
+            self._prev_col = self._col
+            self._row, self._col = r, c
         
         q = self._q
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
@@ -235,8 +236,10 @@ class PacmanNode(Node):
             if dtype in ('heartbeat', 'agent'):
                 _, gid, r, c = diff[:4]
                 if 0 <= gid < N_GHOSTS:
-                    self._ghost_prev_pos[gid]  = self._ghost_pos.get(gid)
-                    self._ghost_pos[gid]       = (int(r), int(c))
+                    new_pos = (int(r), int(c))
+                    if self._ghost_pos.get(gid) != new_pos:
+                        self._ghost_prev_pos[gid] = self._ghost_pos.get(gid)
+                    self._ghost_pos[gid]       = new_pos
                     self._ghost_last_seen[gid] = self._tick
             elif dtype == 'agent_lost':
                 _, gid = diff[:2]
@@ -523,13 +526,15 @@ class PacmanNode(Node):
         if self._dead:
             self._dead_timer -= 1
             if self._dead_timer <= 0:
-                self.get_logger().info('GAME OVER - Closing everything...')
-                self._cmd_pub.publish(Twist())
-                
-                import os
-                import signal
-                # Cleanly shutdown the ros2 launch process
-                os.kill(os.getppid(), signal.SIGINT)
+                if not getattr(self, '_shutdown_triggered', False):
+                    self.get_logger().info('GAME OVER - Closing everything...')
+                    self._cmd_pub.publish(Twist())
+                    self._shutdown_triggered = True
+                    
+                    import os
+                    import signal
+                    # Cleanly shutdown the ros2 launch process
+                    os.kill(os.getppid(), signal.SIGINT)
                 
             self._cmd_pub.publish(Twist())
             return
@@ -550,6 +555,9 @@ class PacmanNode(Node):
             if self._grid[gr, gc] == POWER:
                 self._grid[gr, gc] = PELLET
                 self._power_neutralised += 1
+                msg = String()
+                msg.data = f"neutralise:{gr}:{gc}"
+                self._game_events_pub.publish(msg)
                     
             same_cell = (self._row == gr and self._col == gc)
             
